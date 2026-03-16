@@ -1,9 +1,15 @@
 import os
+import glob
 import yt_dlp
+import imageio_ffmpeg
 from threading import Thread
 from flask import Flask
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
+
+# --- MAGIC FFMPEG FIX ---
+# This automatically finds the FFmpeg software we just added to requirements!
+FFMPEG_PATH = imageio_ffmpeg.get_ffmpeg_exe()
 
 # --- 1. KEEP-ALIVE WEBSITE ---
 app = Flask(__name__)
@@ -22,6 +28,7 @@ TEXTS = {
         'lang_set': "Language set to English! 🇬🇧",
         'choose_format': "Link detected! Choose your format:",
         'downloading': "Downloading... please wait ⏳",
+        'error': "❌ Error:",
     },
     'es': {
         'welcome': "¡Hola! Envíame un enlace de YouTube, Instagram o TikTok para descargar.",
@@ -29,6 +36,7 @@ TEXTS = {
         'lang_set': "¡Idioma cambiado a Español! 🇪🇸",
         'choose_format': "¡Enlace detectado! Elige el formato:",
         'downloading': "Descargando... por favor espera ⏳",
+        'error': "❌ Error:",
     }
 }
 
@@ -56,9 +64,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if "http://" in text or "https://" in text:
         context.user_data['last_link'] = text 
         keyboard = [
-            [InlineKeyboardButton("Video (Best Quality with Sound)", callback_data='dl_mp4_best')],
+            [InlineKeyboardButton("Video (Best Quality + Sound)", callback_data='dl_mp4_best')],
             [InlineKeyboardButton("Video (Low Quality)", callback_data='dl_mp4_low')],
-            [InlineKeyboardButton("Audio Only", callback_data='dl_mp3')]
+            [InlineKeyboardButton("Audio Only (MP3)", callback_data='dl_mp3')]
         ]
         await update.message.reply_text(get_text(user_id, 'choose_format'), reply_markup=InlineKeyboardMarkup(keyboard))
     else:
@@ -69,7 +77,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = query.from_user.id
     await query.answer()
 
-    # --- Language Buttons ---
     if query.data == 'lang_en':
         user_languages[user_id] = 'en'
         await query.edit_message_text(get_text(user_id, 'lang_set'))
@@ -77,49 +84,72 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_languages[user_id] = 'es'
         await query.edit_message_text(get_text(user_id, 'lang_set'))
 
-    # --- Download Buttons ---
     elif query.data.startswith('dl_'):
         link = context.user_data.get('last_link')
-        if not link:
-            return
+        if not link: return
             
         await query.edit_message_text(get_text(user_id, 'downloading'))
         
-        # MAGIC FIX FOR SOUND AND NO CONVERTER ERRORS:
+        # Clean up any old files just in case
+        for old_file in glob.glob(f"{user_id}_media*"):
+            os.remove(old_file)
+
+        # Base options to make YouTube and TikTok behave properly
+        ydl_opts = {
+            'ffmpeg_location': FFMPEG_PATH, # Gives yt-dlp the power to merge/convert files!
+            'outtmpl': f'{user_id}_media.%(ext)s',
+            'noplaylist': True,
+            'quiet': True,
+        }
+        
+        # Bulletproof Formats
         if query.data == 'dl_mp4_best':
-            # 'best' gets a file that ALREADY has video and audio combined
-            ydl_opts = {'format': 'best', 'outtmpl': f'{user_id}_video.%(ext)s'}
+            # Try to get separate HD video/audio and merge them. If that fails, get the best pre-merged file.
+            ydl_opts['format'] = 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best'
+            
         elif query.data == 'dl_mp4_low':
-            # 'worst' gets the smallest combined file
-            ydl_opts = {'format': 'worst', 'outtmpl': f'{user_id}_video.%(ext)s'}
+            ydl_opts['format'] = 'worst[ext=mp4]/worst'
+            
         elif query.data == 'dl_mp3':
-            # 'bestaudio' gets the raw audio file (usually .m4a or .webm). 
-            # We don't force .mp3 because that requires ffmpeg! Telegram plays .m4a perfectly.
-            ydl_opts = {'format': 'bestaudio', 'outtmpl': f'{user_id}_audio.%(ext)s'}
+            # Get the best audio. If the site refuses, get the whole video and RIP the audio out into an MP3!
+            ydl_opts['format'] = 'bestaudio/best'
+            ydl_opts['postprocessors'] = [{
+                'key': 'FFmpegExtractAudio',
+                'preferredcodec': 'mp3',
+                'preferredquality': '192',
+            }]
 
-        filename = None
         try:
+            # Tell yt-dlp to download it
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(link, download=True)
-                filename = ydl.prepare_filename(info)
+                ydl.download([link])
 
-            # Send the file
-            if query.data == 'dl_mp3':
-                with open(filename, 'rb') as audio:
-                    await context.bot.send_audio(chat_id=user_id, audio=audio)
+            # Because yt-dlp changes the extension (like .webm to .mp3), 
+            # we use 'glob' to find exactly what it named the final file!
+            downloaded_files = glob.glob(f"{user_id}_media*")
+            
+            if downloaded_files:
+                final_file = downloaded_files[0]
+                
+                # Send the file
+                if query.data == 'dl_mp3':
+                    with open(final_file, 'rb') as audio:
+                        await context.bot.send_audio(chat_id=user_id, audio=audio)
+                else:
+                    with open(final_file, 'rb') as video:
+                        await context.bot.send_video(chat_id=user_id, video=video)
             else:
-                with open(filename, 'rb') as video:
-                    await context.bot.send_video(chat_id=user_id, video=video)
+                raise Exception("Could not locate the downloaded file.")
             
         except Exception as e:
-            error_msg = f"❌ Error:\n{str(e)}"
+            error_msg = f"{get_text(user_id, 'error')}\n{str(e)}"
             print(error_msg)
             await context.bot.send_message(chat_id=user_id, text=error_msg)
             
         finally:
-            # Always delete the file from the server when done, even if it crashes!
-            if filename and os.path.exists(filename):
-                os.remove(filename)
+            # Clean up the file so the server storage doesn't get full
+            for f in glob.glob(f"{user_id}_media*"):
+                os.remove(f)
 
 # --- 4. START THE BOT ---
 if __name__ == '__main__':
