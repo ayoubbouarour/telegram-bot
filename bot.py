@@ -8,7 +8,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
 
 # --- MAGIC FFMPEG FIX ---
-# This automatically finds the FFmpeg software we just added to requirements!
+# This automatically finds the FFmpeg software so we can extract MP3s and merge sound!
 FFMPEG_PATH = imageio_ffmpeg.get_ffmpeg_exe()
 
 # --- 1. KEEP-ALIVE WEBSITE ---
@@ -61,6 +61,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     text = update.message.text
 
+    # Check if the message contains a link
     if "http://" in text or "https://" in text:
         context.user_data['last_link'] = text 
         keyboard = [
@@ -77,6 +78,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = query.from_user.id
     await query.answer()
 
+    # --- Language Buttons ---
     if query.data == 'lang_en':
         user_languages[user_id] = 'en'
         await query.edit_message_text(get_text(user_id, 'lang_set'))
@@ -84,6 +86,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_languages[user_id] = 'es'
         await query.edit_message_text(get_text(user_id, 'lang_set'))
 
+    # --- Download Buttons ---
     elif query.data.startswith('dl_'):
         link = context.user_data.get('last_link')
         if not link: return
@@ -92,26 +95,30 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         # Clean up any old files just in case
         for old_file in glob.glob(f"{user_id}_media*"):
-            os.remove(old_file)
+            if os.path.exists(old_file):
+                os.remove(old_file)
 
         # Base options to make YouTube and TikTok behave properly
         ydl_opts = {
-            'ffmpeg_location': FFMPEG_PATH, # Gives yt-dlp the power to merge/convert files!
+            'ffmpeg_location': FFMPEG_PATH, 
             'outtmpl': f'{user_id}_media.%(ext)s',
             'noplaylist': True,
             'quiet': True,
+            # THE YOUTUBE MAGIC DISGUISE (Makes YouTube think the bot is an iPhone)
+            'extractor_args': {'youtube': ['player_client=ios']}, 
         }
         
         # Bulletproof Formats
         if query.data == 'dl_mp4_best':
-            # Try to get separate HD video/audio and merge them. If that fails, get the best pre-merged file.
+            # Try to get best video + audio.
             ydl_opts['format'] = 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best'
             
         elif query.data == 'dl_mp4_low':
+            # Get smallest video
             ydl_opts['format'] = 'worst[ext=mp4]/worst'
             
         elif query.data == 'dl_mp3':
-            # Get the best audio. If the site refuses, get the whole video and RIP the audio out into an MP3!
+            # Extract pure MP3
             ydl_opts['format'] = 'bestaudio/best'
             ydl_opts['postprocessors'] = [{
                 'key': 'FFmpegExtractAudio',
@@ -124,14 +131,13 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 ydl.download([link])
 
-            # Because yt-dlp changes the extension (like .webm to .mp3), 
-            # we use 'glob' to find exactly what it named the final file!
+            # Find the final file that yt-dlp created
             downloaded_files = glob.glob(f"{user_id}_media*")
             
             if downloaded_files:
                 final_file = downloaded_files[0]
                 
-                # Send the file
+                # Send the file to the user
                 if query.data == 'dl_mp3':
                     with open(final_file, 'rb') as audio:
                         await context.bot.send_audio(chat_id=user_id, audio=audio)
@@ -147,15 +153,16 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await context.bot.send_message(chat_id=user_id, text=error_msg)
             
         finally:
-            # Clean up the file so the server storage doesn't get full
+            # Always clean up the file so the server storage doesn't get full!
             for f in glob.glob(f"{user_id}_media*"):
-                os.remove(f)
+                if os.path.exists(f):
+                    os.remove(f)
 
 # --- 4. START THE BOT ---
 if __name__ == '__main__':
     keep_alive()
     
-    # PUT YOUR TOKEN HERE
+    # !!! PUT YOUR EXACT BOT TOKEN HERE !!!
     TOKEN = "8590047923:AAGMOfoDGuVotkf2zYp6kaChXKpRWOLph1w" 
     
     bot_app = Application.builder().token(TOKEN).build()
