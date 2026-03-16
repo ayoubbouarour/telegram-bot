@@ -69,7 +69,7 @@ if __name__ == '__main__':
     keep_alive() # Start the fake website
     
     # PUT YOUR TOKEN HERE!
-    TOKEN = "8590047923:AAFuBw1yg117VIiFVUU3xBicp8b71TSuHn0" 
+    TOKEN = "8590047923:AAGMOfoDGuVotkf2zYp6kaChXKpRWOLph1w" 
     
     bot_app = Application.builder().token(TOKEN).build()
     
