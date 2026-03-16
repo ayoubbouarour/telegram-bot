@@ -34,7 +34,7 @@ if __name__ == '__main__':
 
     # Start the Telegram bot
     # PUT YOUR TOKEN HERE:
-    TOKEN = "YOUR_TOKEN_HERE"
+    TOKEN = "8590047923:AAFuBw1yg117VIiFVUU3xBicp8b71TSuHn0"
 
     bot_app = Application.builder().token(TOKEN).build()
     bot_app.add_handler(CommandHandler('start', start_command))
