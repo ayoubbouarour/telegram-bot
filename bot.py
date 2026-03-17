@@ -483,6 +483,7 @@ _BASE_YDL: dict = {
     "quiet":           True,
     "no_warnings":     True,
     "socket_timeout":  30,
+    "cookiefile":      "cookies.txt", 
 }
 
 def _build_strategies(fmt: str, prefix: str, cookie_file: str | None) -> list[dict]:
