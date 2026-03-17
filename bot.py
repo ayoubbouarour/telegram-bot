@@ -2,8 +2,7 @@
 Super Bot — Telegram multi-tool bot
 ══════════════════════════════════════════════════════════════
 TOOLS
-  ▸ Downloader  — YouTube, Instagram, TikTok, Facebook, Twitter/X
-                  (multi-strategy fallback so downloads rarely fail)
+  ▸ Downloader  — YouTube ✅, Instagram, TikTok, Facebook, Twitter/X
   ▸ AI Image    — Pollinations.ai
   ▸ QR Code     — api.qrserver.com
   ▸ Voice Maker — gTTS text-to-speech
@@ -11,14 +10,19 @@ TOOLS
   ▸ Weather     — wttr.in (no API key needed)
   ▸ Currency    — open.er-api.com (no API key needed)
 
-QUALITY-OF-LIFE
-  ▸ 5-language UI (EN / ES / FR / PT / AR)
-  ▸ Per-user sliding-window rate limiting
-  ▸ Admin /broadcast command
-  ▸ Non-blocking I/O via asyncio.to_thread
-  ▸ Animated progress dots during long operations
-  ▸ Structured logging + guaranteed temp-file cleanup
-  ▸ Token & admin IDs loaded from environment variables
+YOUTUBE FIX
+  YouTube now requires cookie authentication for many videos.
+  This bot supports three cookie methods (tried in order):
+    1. YOUTUBE_COOKIES env var  — paste raw Netscape cookie string
+    2. cookies.txt file         — Netscape format cookie file
+    3. Multi-client fallback    — Android / iOS / mweb / web
+
+HOW TO GET COOKIES (easiest method):
+  1. Install the "Get cookies.txt LOCALLY" Chrome/Firefox extension
+  2. Go to youtube.com while logged in
+  3. Click the extension → Export cookies
+  4. Copy the entire file content
+  5. Set it as the YOUTUBE_COOKIES environment variable on your host
 ══════════════════════════════════════════════════════════════
 """
 
@@ -26,9 +30,9 @@ import os
 import re
 import glob
 import time
-import json
 import asyncio
 import logging
+import tempfile
 import urllib.parse
 from pathlib import Path
 from threading import Thread
@@ -59,17 +63,42 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ══════════════════════════════════════════════════════════
-# 2.  CONFIG  — secrets always come from environment vars
+# 2.  CONFIG
 # ══════════════════════════════════════════════════════════
 TOKEN       = os.environ.get("BOT_TOKEN", "YOUR_TOKEN_HERE")
 ADMIN_IDS   = {int(x) for x in os.environ.get("ADMIN_IDS", "").split(",") if x.strip()}
 FFMPEG_PATH = imageio_ffmpeg.get_ffmpeg_exe()
-MAX_FILE_MB = 50        # Telegram bot API hard limit
-RATE_LIMIT  = 8         # requests allowed per window
-RATE_WINDOW = 60        # window in seconds
+MAX_FILE_MB = 50
+RATE_LIMIT  = 8
+RATE_WINDOW = 60
+
+# Cookie configuration
+# Option 1: Set YOUTUBE_COOKIES env var with the full content of a cookies.txt file
+# Option 2: Place a cookies.txt file next to this script
+YOUTUBE_COOKIES_ENV  = os.environ.get("YOUTUBE_COOKIES", "")   # raw Netscape cookie string
+YOUTUBE_COOKIES_FILE = os.path.join(os.path.dirname(__file__), "cookies.txt")
+
+def _get_cookie_file() -> str | None:
+    """
+    Returns a path to a usable Netscape-format cookie file, or None.
+    Priority: env var (written to a temp file) → cookies.txt on disk.
+    """
+    if YOUTUBE_COOKIES_ENV.strip():
+        # Write the env-var content to a temp file yt-dlp can read
+        tmp = tempfile.NamedTemporaryFile(
+            mode="w", suffix=".txt", delete=False, prefix="yt_cookies_"
+        )
+        tmp.write(YOUTUBE_COOKIES_ENV.strip())
+        tmp.close()
+        logger.info("Using cookies from YOUTUBE_COOKIES env var → %s", tmp.name)
+        return tmp.name
+    if os.path.isfile(YOUTUBE_COOKIES_FILE):
+        logger.info("Using cookies from cookies.txt file")
+        return YOUTUBE_COOKIES_FILE
+    return None
 
 # ══════════════════════════════════════════════════════════
-# 3.  KEEP-ALIVE  (Flask — needed on Replit / Render free tier)
+# 3.  KEEP-ALIVE
 # ══════════════════════════════════════════════════════════
 _flask = Flask(__name__)
 
@@ -101,7 +130,6 @@ def is_rate_limited(uid: int) -> bool:
 # ══════════════════════════════════════════════════════════
 TEXTS: dict[str, dict[str, str]] = {
     "en": {
-        # menus
         "main_menu":       "🤖 *Super Bot*\n\nChoose a tool below:",
         "tools_menu":      "🛠 *More Tools*\n\nChoose a tool:",
         "help_text": (
@@ -142,12 +170,16 @@ TEXTS: dict[str, dict[str, str]] = {
         "broadcast_usage": "Usage: /broadcast <message>",
         "broadcast_done":  "✅ Sent to {n} users.",
         "invalid_currency":"❌ Format not recognised. Try: `100 USD to EUR`",
-        # buttons
-        "btn_help":    "Help ℹ️",       "btn_lang":  "Language 🌐",
-        "btn_image":   "AI Image 🎨",   "btn_qr":    "QR Code 🔳",
-        "btn_tts":     "Voice 🗣️",      "btn_back":  "◀ Back",
-        "btn_tools":   "More Tools 🛠",  "btn_shorten": "Short URL 🔗",
-        "btn_weather": "Weather ⛅",     "btn_currency": "Currency 💱",
+        "no_cookies":      (
+            "⚠️ *YouTube requires login cookies for this video.*\n\n"
+            "Ask the bot admin to set up `YOUTUBE_COOKIES` or add a `cookies.txt` file.\n"
+            "See the top of bot.py for instructions."
+        ),
+        "btn_help":     "Help ℹ️",        "btn_lang":     "Language 🌐",
+        "btn_image":    "AI Image 🎨",    "btn_qr":       "QR Code 🔳",
+        "btn_tts":      "Voice 🗣️",       "btn_back":     "◀ Back",
+        "btn_tools":    "More Tools 🛠",   "btn_shorten":  "Short URL 🔗",
+        "btn_weather":  "Weather ⛅",      "btn_currency": "Currency 💱",
     },
     "es": {
         "main_menu":       "🤖 *Súper Bot*\n\nElige una herramienta:",
@@ -190,11 +222,12 @@ TEXTS: dict[str, dict[str, str]] = {
         "broadcast_usage": "Uso: /broadcast <mensaje>",
         "broadcast_done":  "✅ Enviado a {n} usuarios.",
         "invalid_currency":"❌ Formato no reconocido. Prueba: `100 USD to EUR`",
-        "btn_help":    "Ayuda ℹ️",      "btn_lang":  "Idioma 🌐",
-        "btn_image":   "Imagen IA 🎨",  "btn_qr":    "Código QR 🔳",
-        "btn_tts":     "Voz 🗣️",        "btn_back":  "◀ Volver",
-        "btn_tools":   "Más Herramientas 🛠", "btn_shorten": "Acortar URL 🔗",
-        "btn_weather": "Clima ⛅",       "btn_currency": "Moneda 💱",
+        "no_cookies":      "⚠️ *YouTube requiere cookies para este vídeo.* Contacta al admin del bot.",
+        "btn_help":     "Ayuda ℹ️",       "btn_lang":     "Idioma 🌐",
+        "btn_image":    "Imagen IA 🎨",   "btn_qr":       "Código QR 🔳",
+        "btn_tts":      "Voz 🗣️",         "btn_back":     "◀ Volver",
+        "btn_tools":    "Más Herramientas 🛠", "btn_shorten": "Acortar URL 🔗",
+        "btn_weather":  "Clima ⛅",        "btn_currency": "Moneda 💱",
     },
     "fr": {
         "main_menu":       "🤖 *Super Bot*\n\nChoisissez un outil :",
@@ -237,11 +270,12 @@ TEXTS: dict[str, dict[str, str]] = {
         "broadcast_usage": "Usage : /broadcast <message>",
         "broadcast_done":  "✅ Envoyé à {n} utilisateurs.",
         "invalid_currency":"❌ Format non reconnu. Essayez : `100 USD to EUR`",
-        "btn_help":    "Aide ℹ️",       "btn_lang":  "Langue 🌐",
-        "btn_image":   "Image IA 🎨",   "btn_qr":    "Code QR 🔳",
-        "btn_tts":     "Voix 🗣️",       "btn_back":  "◀ Retour",
-        "btn_tools":   "Plus d'Outils 🛠", "btn_shorten": "Raccourcir URL 🔗",
-        "btn_weather": "Météo ⛅",       "btn_currency": "Devise 💱",
+        "no_cookies":      "⚠️ *YouTube exige des cookies pour cette vidéo.* Contactez l'admin.",
+        "btn_help":     "Aide ℹ️",        "btn_lang":     "Langue 🌐",
+        "btn_image":    "Image IA 🎨",    "btn_qr":       "Code QR 🔳",
+        "btn_tts":      "Voix 🗣️",        "btn_back":     "◀ Retour",
+        "btn_tools":    "Plus d'Outils 🛠", "btn_shorten": "Raccourcir URL 🔗",
+        "btn_weather":  "Météo ⛅",        "btn_currency": "Devise 💱",
     },
     "pt": {
         "main_menu":       "🤖 *Super Bot*\n\nEscolha uma ferramenta:",
@@ -284,11 +318,12 @@ TEXTS: dict[str, dict[str, str]] = {
         "broadcast_usage": "Uso: /broadcast <mensagem>",
         "broadcast_done":  "✅ Enviado para {n} usuários.",
         "invalid_currency":"❌ Formato não reconhecido. Tente: `100 USD to EUR`",
-        "btn_help":    "Ajuda ℹ️",      "btn_lang":  "Idioma 🌐",
-        "btn_image":   "Imagem IA 🎨",  "btn_qr":    "Código QR 🔳",
-        "btn_tts":     "Voz 🗣️",        "btn_back":  "◀ Voltar",
-        "btn_tools":   "Mais Ferramentas 🛠", "btn_shorten": "Encurtar URL 🔗",
-        "btn_weather": "Clima ⛅",       "btn_currency": "Moeda 💱",
+        "no_cookies":      "⚠️ *YouTube requer cookies para este vídeo.* Contacte o admin.",
+        "btn_help":     "Ajuda ℹ️",       "btn_lang":     "Idioma 🌐",
+        "btn_image":    "Imagem IA 🎨",   "btn_qr":       "Código QR 🔳",
+        "btn_tts":      "Voz 🗣️",         "btn_back":     "◀ Voltar",
+        "btn_tools":    "Mais Ferramentas 🛠", "btn_shorten": "Encurtar URL 🔗",
+        "btn_weather":  "Clima ⛅",        "btn_currency": "Moeda 💱",
     },
     "ar": {
         "main_menu":       "🤖 *الروبوت الخارق*\n\nاختر أداة:",
@@ -331,11 +366,12 @@ TEXTS: dict[str, dict[str, str]] = {
         "broadcast_usage": "الاستخدام: /broadcast <رسالة>",
         "broadcast_done":  "✅ تم الإرسال إلى {n} مستخدم.",
         "invalid_currency":"❌ تنسيق غير معروف. جرب: `100 USD to EUR`",
-        "btn_help":    "مساعدة ℹ️",              "btn_lang":  "اللغة 🌐",
-        "btn_image":   "صورة ذكاء اصطناعي 🎨",   "btn_qr":    "رمز QR 🔳",
-        "btn_tts":     "صوت 🗣️",                 "btn_back":  "◀ رجوع",
-        "btn_tools":   "المزيد من الأدوات 🛠",    "btn_shorten": "اختصار URL 🔗",
-        "btn_weather": "الطقس ⛅",                "btn_currency": "العملة 💱",
+        "no_cookies":      "⚠️ *يوتيوب يتطلب تسجيل الدخول لهذا الفيديو.* تواصل مع مدير البوت.",
+        "btn_help":     "مساعدة ℹ️",              "btn_lang":     "اللغة 🌐",
+        "btn_image":    "صورة ذكاء اصطناعي 🎨",   "btn_qr":       "رمز QR 🔳",
+        "btn_tts":      "صوت 🗣️",                 "btn_back":     "◀ رجوع",
+        "btn_tools":    "المزيد من الأدوات 🛠",    "btn_shorten":  "اختصار URL 🔗",
+        "btn_weather":  "الطقس ⛅",                "btn_currency": "العملة 💱",
     },
 }
 
@@ -347,11 +383,11 @@ def t(uid: int, key: str) -> str:
 # 6.  LINK VALIDATION
 # ══════════════════════════════════════════════════════════
 LINK_VALIDATORS: dict[str, tuple[list[str], str]] = {
-    "waiting_for_yt": (["youtube.com", "youtu.be"],        "invalid_yt"),
-    "waiting_for_ig": (["instagram.com"],                   "invalid_ig"),
-    "waiting_for_tt": (["tiktok.com", "vm.tiktok.com"],    "invalid_tt"),
+    "waiting_for_yt": (["youtube.com", "youtu.be"],            "invalid_yt"),
+    "waiting_for_ig": (["instagram.com"],                       "invalid_ig"),
+    "waiting_for_tt": (["tiktok.com", "vm.tiktok.com"],        "invalid_tt"),
     "waiting_for_fb": (["facebook.com", "fb.watch", "fb.com"], "invalid_fb"),
-    "waiting_for_tw": (["twitter.com", "x.com", "t.co"],   "invalid_tw"),
+    "waiting_for_tw": (["twitter.com", "x.com", "t.co"],       "invalid_tw"),
 }
 
 def _valid_link(state: str, url: str) -> bool:
@@ -393,9 +429,7 @@ def tools_menu_keyboard(uid: int) -> InlineKeyboardMarkup:
         [
             InlineKeyboardButton(t(uid, "btn_currency"), callback_data="ask_currency"),
         ],
-        [
-            InlineKeyboardButton(t(uid, "btn_back"), callback_data="show_main"),
-        ],
+        [InlineKeyboardButton(t(uid, "btn_back"), callback_data="show_main")],
     ])
 
 def back_keyboard(uid: int) -> InlineKeyboardMarkup:
@@ -406,11 +440,11 @@ def back_keyboard(uid: int) -> InlineKeyboardMarkup:
 def format_keyboard(uid: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [
-            InlineKeyboardButton("🎬 Video HD",     callback_data="dl_mp4_best"),
-            InlineKeyboardButton("📱 Video SD",     callback_data="dl_mp4_low"),
+            InlineKeyboardButton("🎬 Video HD",      callback_data="dl_mp4_best"),
+            InlineKeyboardButton("📱 Video SD",      callback_data="dl_mp4_low"),
         ],
         [
-            InlineKeyboardButton("🎵 Audio MP3",    callback_data="dl_mp3"),
+            InlineKeyboardButton("🎵 Audio MP3",     callback_data="dl_mp3"),
             InlineKeyboardButton(t(uid, "btn_back"), callback_data="show_main"),
         ],
     ])
@@ -441,11 +475,8 @@ async def _animate(msg, stop: asyncio.Event, base: str) -> None:
         await asyncio.sleep(2.5)
 
 # ══════════════════════════════════════════════════════════
-# 9.  DOWNLOAD ENGINE  (multi-strategy with auto-fallback)
+# 9.  DOWNLOAD ENGINE
 # ══════════════════════════════════════════════════════════
-# Each strategy is tried in order until one succeeds.
-# This is the primary fix for "sign-in required / bot detected" errors.
-
 _BASE_YDL: dict = {
     "ffmpeg_location": FFMPEG_PATH,
     "noplaylist":      True,
@@ -454,55 +485,74 @@ _BASE_YDL: dict = {
     "socket_timeout":  30,
 }
 
-def _build_strategies(fmt: str, prefix: str) -> list[dict]:
-    """Return a list of yt-dlp option dicts to try in sequence."""
-
-    # Format strings
+def _build_strategies(fmt: str, prefix: str, cookie_file: str | None) -> list[dict]:
+    """
+    Build a prioritised list of yt-dlp option dicts.
+    When a cookie file is available it is tried FIRST, dramatically
+    reducing sign-in errors on YouTube.
+    """
     if fmt == "mp4_best":
-        video_fmt = "bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best[ext=mp4]/best"
+        vfmt = "bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best[ext=mp4]/best"
     elif fmt == "mp4_low":
-        video_fmt = "worst[ext=mp4]/worstvideo+worstaudio/worst"
-    else:  # mp3
-        video_fmt = "bestaudio/best"
+        vfmt = "worst[ext=mp4]/worstvideo+worstaudio/worst"
+    else:
+        vfmt = "bestaudio/best"
 
     post = []
     if fmt == "mp3":
         post = [{"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": "192"}]
 
-    common = {**_BASE_YDL, "outtmpl": f"{prefix}.%(ext)s", "postprocessors": post}
+    base = {**_BASE_YDL, "outtmpl": f"{prefix}.%(ext)s", "postprocessors": post, "format": vfmt}
 
-    return [
-        # Strategy 1: Android client (bypasses many age/sign-in walls)
-        {**common, "format": video_fmt,
-         "extractor_args": {"youtube": {"player_client": ["android"]}}},
+    strategies: list[dict] = []
 
-        # Strategy 2: iOS client
-        {**common, "format": video_fmt,
-         "extractor_args": {"youtube": {"player_client": ["ios"]}}},
+    # ── With cookies (highest success rate on YouTube) ────
+    if cookie_file:
+        strategies += [
+            # cookies + Android player  ← best combo for most videos
+            {**base, "cookiefile": cookie_file,
+             "extractor_args": {"youtube": {"player_client": ["android"]}}},
+            # cookies + iOS player
+            {**base, "cookiefile": cookie_file,
+             "extractor_args": {"youtube": {"player_client": ["ios"]}}},
+            # cookies + default web player
+            {**base, "cookiefile": cookie_file},
+        ]
 
-        # Strategy 3: mweb (mobile web) — good for Instagram/TikTok
-        {**common, "format": video_fmt,
-         "extractor_args": {"youtube": {"player_client": ["mweb"]}}},
-
-        # Strategy 4: web client with cookies from browser (last resort)
-        {**common, "format": video_fmt},
+    # ── Without cookies (fallback / non-YouTube platforms) ─
+    strategies += [
+        {**base, "extractor_args": {"youtube": {"player_client": ["android"]}}},
+        {**base, "extractor_args": {"youtube": {"player_client": ["ios"]}}},
+        {**base, "extractor_args": {"youtube": {"player_client": ["mweb"]}}},
+        {**base},   # plain default — last resort
     ]
 
+    return strategies
+
+
 def _run_download(strategies: list[dict], url: str) -> None:
-    """Try each strategy in turn; raise only if all fail."""
+    """Try each strategy in sequence; raise the last error only if all fail."""
     last_exc: Exception | None = None
-    for opts in strategies:
+    for i, opts in enumerate(strategies, 1):
         try:
+            logger.info("Download strategy %d/%d …", i, len(strategies))
             with yt_dlp.YoutubeDL(opts) as ydl:
                 ydl.download([url])
-            return   # success — stop trying
+            logger.info("Strategy %d succeeded.", i)
+            return
         except Exception as exc:
+            logger.warning("Strategy %d failed: %s", i, exc)
             last_exc = exc
-            logger.warning("Strategy failed (%s), trying next…", exc)
-    raise last_exc  # all strategies exhausted
+    raise last_exc
+
+
+def _is_cookie_error(exc: Exception) -> bool:
+    """Return True when the error is specifically a sign-in / cookie wall."""
+    msg = str(exc).lower()
+    return "sign in" in msg or "cookies" in msg or "bot" in msg or "login" in msg
 
 # ══════════════════════════════════════════════════════════
-# 10. TOOL FUNCTIONS  (weather, currency, url shortener)
+# 10. EXTRA TOOL FUNCTIONS
 # ══════════════════════════════════════════════════════════
 def _shorten_url(url: str) -> str:
     encoded = urllib.parse.quote(url, safe="")
@@ -530,19 +580,15 @@ def _convert_currency(query: str) -> str:
     amount = float(m.group(1).replace(",", "."))
     src    = m.group(2).upper()
     dst    = m.group(3).upper()
-    r = requests.get(
-        f"https://open.er-api.com/v6/latest/{src}",
-        timeout=10,
-    )
+    r = requests.get(f"https://open.er-api.com/v6/latest/{src}", timeout=10)
     r.raise_for_status()
     data = r.json()
     if data.get("result") != "success":
         return ""
-    rate   = data["rates"].get(dst)
+    rate = data["rates"].get(dst)
     if rate is None:
         return ""
-    result = amount * rate
-    return f"💱 {amount:g} {src} = *{result:.4g} {dst}*"
+    return f"💱 {amount:g} {src} = *{amount * rate:.4g} {dst}*"
 
 # ══════════════════════════════════════════════════════════
 # 11. COMMANDS
@@ -593,7 +639,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await update.message.reply_text(t(uid, "rate_limited"))
         return
 
-    # ── QR Code ──────────────────────────────────────────
     if state == "waiting_for_qr":
         user_states[uid] = None
         safe = urllib.parse.quote(text)
@@ -604,7 +649,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         )
         await _send_main(update, uid)
 
-    # ── Text-to-Speech ────────────────────────────────────
     elif state == "waiting_for_tts":
         user_states[uid] = None
         fname = f"{uid}_voice.mp3"
@@ -620,7 +664,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             cleanup(fname)
         await _send_main(update, uid)
 
-    # ── AI Image ─────────────────────────────────────────
     elif state == "waiting_for_image":
         user_states[uid] = None
         msg  = await update.message.reply_text(t(uid, "generating"))
@@ -649,7 +692,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         finally:
             cleanup(fname)
 
-    # ── URL Shortener ─────────────────────────────────────
     elif state == "waiting_for_shorten":
         user_states[uid] = None
         try:
@@ -659,7 +701,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             await update.message.reply_text(f"{t(uid, 'error')} {exc}")
         await _send_main(update, uid)
 
-    # ── Weather ───────────────────────────────────────────
     elif state == "waiting_for_weather":
         user_states[uid] = None
         try:
@@ -669,7 +710,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             await update.message.reply_text(f"{t(uid, 'error')} {exc}")
         await _send_main(update, uid)
 
-    # ── Currency ──────────────────────────────────────────
     elif state == "waiting_for_currency":
         user_states[uid] = None
         try:
@@ -682,7 +722,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             await update.message.reply_text(f"{t(uid, 'error')} {exc}")
         await _send_main(update, uid)
 
-    # ── Social link validation ────────────────────────────
     elif state in LINK_VALIDATORS:
         if not _valid_link(state, text):
             _, bad_key = LINK_VALIDATORS[state]
@@ -694,14 +733,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             t(uid, "choose_format"), reply_markup=format_keyboard(uid), parse_mode="Markdown"
         )
 
-    # ── Raw link (no state) ───────────────────────────────
     elif text.startswith(("http://", "https://")):
         context.user_data["last_link"] = text
         await update.message.reply_text(
             t(uid, "choose_format"), reply_markup=format_keyboard(uid), parse_mode="Markdown"
         )
 
-    # ── Fallback ──────────────────────────────────────────
     else:
         await _send_main(update, uid)
 
@@ -711,7 +748,7 @@ async def _send_main(update: Update, uid: int) -> None:
     )
 
 # ══════════════════════════════════════════════════════════
-# 13. BUTTON / CALLBACK HANDLER
+# 13. BUTTON HANDLER
 # ══════════════════════════════════════════════════════════
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
@@ -723,23 +760,19 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await query.answer(t(uid, "rate_limited"), show_alert=True)
         return
 
-    # ── Navigation ────────────────────────────────────────
     if data == "show_main":
         user_states[uid] = None
         await query.edit_message_text(
             t(uid, "main_menu"), reply_markup=main_menu_keyboard(uid), parse_mode="Markdown"
         )
-
     elif data == "show_tools":
         await query.edit_message_text(
             t(uid, "tools_menu"), reply_markup=tools_menu_keyboard(uid), parse_mode="Markdown"
         )
-
     elif data == "show_help":
         await query.edit_message_text(
             t(uid, "help_text"), reply_markup=back_keyboard(uid), parse_mode="Markdown"
         )
-
     elif data == "show_lang":
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("English 🇬🇧",   callback_data="lang_en"),
@@ -752,53 +785,39 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await query.edit_message_text(
             t(uid, "choose_lang"), reply_markup=kb, parse_mode="Markdown"
         )
-
-    # ── Tool entry points ─────────────────────────────────
     elif data == "ask_qr":
         user_states[uid] = "waiting_for_qr"
         await query.edit_message_text(t(uid, "ask_qr"), reply_markup=back_keyboard(uid), parse_mode="Markdown")
-
     elif data == "ask_tts":
         user_states[uid] = "waiting_for_tts"
         await query.edit_message_text(t(uid, "ask_tts"), reply_markup=back_keyboard(uid), parse_mode="Markdown")
-
     elif data == "ask_image":
         user_states[uid] = "waiting_for_image"
         await query.edit_message_text(t(uid, "ask_prompt"), reply_markup=back_keyboard(uid), parse_mode="Markdown")
-
     elif data == "ask_shorten":
         user_states[uid] = "waiting_for_shorten"
         await query.edit_message_text(t(uid, "ask_shorten"), reply_markup=back_keyboard(uid), parse_mode="Markdown")
-
     elif data == "ask_weather":
         user_states[uid] = "waiting_for_weather"
         await query.edit_message_text(t(uid, "ask_weather"), reply_markup=back_keyboard(uid), parse_mode="Markdown")
-
     elif data == "ask_currency":
         user_states[uid] = "waiting_for_currency"
         await query.edit_message_text(t(uid, "ask_currency"), reply_markup=back_keyboard(uid), parse_mode="Markdown")
-
     elif data == "ask_yt":
         user_states[uid] = "waiting_for_yt"
         await query.edit_message_text(t(uid, "ask_yt"), reply_markup=back_keyboard(uid), parse_mode="Markdown")
-
     elif data == "ask_ig":
         user_states[uid] = "waiting_for_ig"
         await query.edit_message_text(t(uid, "ask_ig"), reply_markup=back_keyboard(uid), parse_mode="Markdown")
-
     elif data == "ask_tt":
         user_states[uid] = "waiting_for_tt"
         await query.edit_message_text(t(uid, "ask_tt"), reply_markup=back_keyboard(uid), parse_mode="Markdown")
-
     elif data == "ask_fb":
         user_states[uid] = "waiting_for_fb"
         await query.edit_message_text(t(uid, "ask_fb"), reply_markup=back_keyboard(uid), parse_mode="Markdown")
-
     elif data == "ask_tw":
         user_states[uid] = "waiting_for_tw"
         await query.edit_message_text(t(uid, "ask_tw"), reply_markup=back_keyboard(uid), parse_mode="Markdown")
-
-    # ── Language selection ────────────────────────────────
     elif data.startswith("lang_"):
         user_languages[uid] = data[5:]
         await query.edit_message_text(
@@ -816,16 +835,19 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             )
             return
 
-        fmt_key  = data[3:]                      # "mp4_best" | "mp4_low" | "mp3"
-        prefix   = f"{uid}_media"
+        fmt_key = data[3:]   # mp4_best | mp4_low | mp3
+        prefix  = f"{uid}_media"
         cleanup(f"{prefix}*")
+
+        # Resolve cookie file once per download
+        cookie_file = await asyncio.to_thread(_get_cookie_file)
 
         base_text = t(uid, "downloading")
         msg  = await query.edit_message_text(base_text)
         stop = asyncio.Event()
         anim = asyncio.create_task(_animate(msg, stop, base_text))
 
-        strategies = _build_strategies(fmt_key, prefix)
+        strategies = _build_strategies(fmt_key, prefix, cookie_file)
 
         try:
             await asyncio.to_thread(_run_download, strategies, link)
@@ -845,7 +867,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                     await context.bot.send_audio(chat_id=uid, audio=fh)
                 else:
                     await context.bot.send_video(chat_id=uid, video=fh)
-
             try:
                 await msg.delete()
             except Exception:
@@ -854,13 +875,22 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         except Exception as exc:
             stop.set(); anim.cancel()
             logger.error("Download uid=%s: %s", uid, exc)
-            await context.bot.send_message(
-                chat_id=uid,
-                text=f"{t(uid, 'error')}\n`{exc}`",
-                parse_mode="Markdown",
-            )
+            # Give a friendlier message when it's specifically a cookie wall
+            if _is_cookie_error(exc) and not cookie_file:
+                await context.bot.send_message(
+                    chat_id=uid, text=t(uid, "no_cookies"), parse_mode="Markdown"
+                )
+            else:
+                await context.bot.send_message(
+                    chat_id=uid,
+                    text=f"{t(uid, 'error')}\n`{exc}`",
+                    parse_mode="Markdown",
+                )
         finally:
             cleanup(f"{prefix}*")
+            # Clean up temp cookie file created from env var
+            if cookie_file and cookie_file.startswith(tempfile.gettempdir()):
+                cleanup(cookie_file)
 
 # ══════════════════════════════════════════════════════════
 # 14. ENTRY POINT
