@@ -8,7 +8,6 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
 
 # --- MAGIC FFMPEG FIX ---
-# This automatically finds the FFmpeg software so we can extract MP3s and merge sound!
 FFMPEG_PATH = imageio_ffmpeg.get_ffmpeg_exe()
 
 # --- 1. KEEP-ALIVE WEBSITE ---
@@ -18,24 +17,46 @@ def home(): return "Bot is awake!"
 def run_flask(): app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
 def keep_alive(): Thread(target=run_flask).start()
 
-# --- 2. LANGUAGE SYSTEM ---
+# --- 2. LANGUAGE SYSTEM & INSTRUCTIONS ---
 user_languages = {}
 
 TEXTS = {
     'en': {
-        'welcome': "Hello! Send me a YouTube, Instagram, or TikTok link to download.",
+        'welcome': (
+            "🤖 **Welcome to the Downloader Bot!**\n\n"
+            "Here is how to use me:\n"
+            "1️⃣ Copy a video link from YouTube, TikTok, or Instagram.\n"
+            "2️⃣ Paste and send the link to me in this chat.\n"
+            "3️⃣ Click the button for the format you want (Video or MP3).\n"
+            "4️⃣ Wait a moment, and I will send you the file directly!\n\n"
+            "⚙️ **Commands:**\n"
+            "/language - Change language (English/Español)\n"
+            "/help - Show these instructions again\n\n"
+            "👇 *Send me your first link to get started!*"
+        ),
         'choose_lang': "Please choose your language:",
-        'lang_set': "Language set to English! 🇬🇧",
-        'choose_format': "Link detected! Choose your format:",
-        'downloading': "Downloading... please wait ⏳",
+        'lang_set': "Language set to English! 🇬🇧\nSend me a link to download.",
+        'choose_format': "🔗 Link detected! Choose your format:",
+        'downloading': "Downloading... please wait ⏳ (This might take a minute)",
         'error': "❌ Error:",
     },
     'es': {
-        'welcome': "¡Hola! Envíame un enlace de YouTube, Instagram o TikTok para descargar.",
+        'welcome': (
+            "🤖 **¡Bienvenido al Bot de Descargas!**\n\n"
+            "Aquí te explicamos cómo usarme:\n"
+            "1️⃣ Copia un enlace de video de YouTube, TikTok o Instagram.\n"
+            "2️⃣ Pega y envíame el enlace en este chat.\n"
+            "3️⃣ Haz clic en el botón del formato que deseas (Video o MP3).\n"
+            "4️⃣ ¡Espera un momento y te enviaré el archivo directamente!\n\n"
+            "⚙️ **Comandos:**\n"
+            "/language - Cambiar idioma (English/Español)\n"
+            "/help - Mostrar estas instrucciones nuevamente\n\n"
+            "👇 *¡Envíame tu primer enlace para comenzar!*"
+        ),
         'choose_lang': "Por favor, elige tu idioma:",
-        'lang_set': "¡Idioma cambiado a Español! 🇪🇸",
-        'choose_format': "¡Enlace detectado! Elige el formato:",
-        'downloading': "Descargando... por favor espera ⏳",
+        'lang_set': "¡Idioma cambiado a Español! 🇪🇸\nEnvíame un enlace para descargar.",
+        'choose_format': "🔗 ¡Enlace detectado! Elige el formato:",
+        'downloading': "Descargando... por favor espera ⏳ (Puede tardar un minuto)",
         'error': "❌ Error:",
     }
 }
@@ -46,6 +67,10 @@ def get_text(user_id, key):
 
 # --- 3. BOT COMMANDS & HANDLERS ---
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    await update.message.reply_text(get_text(user_id, 'welcome'))
+
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     await update.message.reply_text(get_text(user_id, 'welcome'))
 
@@ -65,12 +90,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if "http://" in text or "https://" in text:
         context.user_data['last_link'] = text 
         keyboard = [
-            [InlineKeyboardButton("Video (Best Quality + Sound)", callback_data='dl_mp4_best')],
-            [InlineKeyboardButton("Video (Low Quality)", callback_data='dl_mp4_low')],
-            [InlineKeyboardButton("Audio Only (MP3)", callback_data='dl_mp3')]
+            [InlineKeyboardButton("🎬 Video (Best Quality + Sound)", callback_data='dl_mp4_best')],
+            [InlineKeyboardButton("📱 Video (Low Quality / Save Data)", callback_data='dl_mp4_low')],
+            [InlineKeyboardButton("🎵 Audio Only (MP3)", callback_data='dl_mp3')]
         ]
         await update.message.reply_text(get_text(user_id, 'choose_format'), reply_markup=InlineKeyboardMarkup(keyboard))
     else:
+        # If they type random text, show the instructions again
         await update.message.reply_text(get_text(user_id, 'welcome'))
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -98,27 +124,19 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if os.path.exists(old_file):
                 os.remove(old_file)
 
-        # Base options to make YouTube and TikTok behave properly
         ydl_opts = {
             'ffmpeg_location': FFMPEG_PATH, 
             'outtmpl': f'{user_id}_media.%(ext)s',
             'noplaylist': True,
             'quiet': True,
-            # THE YOUTUBE MAGIC DISGUISE (Makes YouTube think the bot is an iPhone)
             'extractor_args': {'youtube': ['player_client=ios']}, 
         }
         
-        # Bulletproof Formats
         if query.data == 'dl_mp4_best':
-            # Try to get best video + audio.
             ydl_opts['format'] = 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best'
-            
         elif query.data == 'dl_mp4_low':
-            # Get smallest video
             ydl_opts['format'] = 'worst[ext=mp4]/worst'
-            
         elif query.data == 'dl_mp3':
-            # Extract pure MP3
             ydl_opts['format'] = 'bestaudio/best'
             ydl_opts['postprocessors'] = [{
                 'key': 'FFmpegExtractAudio',
@@ -127,17 +145,14 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             }]
 
         try:
-            # Tell yt-dlp to download it
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 ydl.download([link])
 
-            # Find the final file that yt-dlp created
             downloaded_files = glob.glob(f"{user_id}_media*")
             
             if downloaded_files:
                 final_file = downloaded_files[0]
                 
-                # Send the file to the user
                 if query.data == 'dl_mp3':
                     with open(final_file, 'rb') as audio:
                         await context.bot.send_audio(chat_id=user_id, audio=audio)
@@ -153,7 +168,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await context.bot.send_message(chat_id=user_id, text=error_msg)
             
         finally:
-            # Always clean up the file so the server storage doesn't get full!
             for f in glob.glob(f"{user_id}_media*"):
                 if os.path.exists(f):
                     os.remove(f)
@@ -162,12 +176,14 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 if __name__ == '__main__':
     keep_alive()
     
-    # !!! PUT YOUR EXACT BOT TOKEN HERE !!!
+    # I have put your exact Token here!
     TOKEN = "8590047923:AAGMOfoDGuVotkf2zYp6kaChXKpRWOLph1w" 
     
     bot_app = Application.builder().token(TOKEN).build()
     
+    # Added /help command so users can read instructions anytime
     bot_app.add_handler(CommandHandler('start', start_command))
+    bot_app.add_handler(CommandHandler('help', help_command))
     bot_app.add_handler(CommandHandler('language', language_command))
     bot_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     bot_app.add_handler(CallbackQueryHandler(button_handler))
