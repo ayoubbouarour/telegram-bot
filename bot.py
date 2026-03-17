@@ -6,6 +6,7 @@ import imageio_ffmpeg
 import urllib.parse
 from threading import Thread
 from flask import Flask
+from gtts import gTTS
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
 
@@ -23,56 +24,80 @@ def keep_alive(): Thread(target=run_flask).start()
 user_languages = {}
 user_states = {} 
 
+# Massive Translation Dictionary
 TEXTS = {
     'en': {
-        'main_menu': "🤖 **Welcome to the Media Bot!**\n\nChoose an option from the menu below:",
-        'help_text': (
-            "📖 **How to use me:**\n\n"
-            "📥 **To Download:** Click YouTube, TikTok, or Instagram, then paste your link.\n"
-            "🎨 **To Make Art:** Click the AI Image button and tell me what to draw.\n\n"
-        ),
+        'main_menu': "🤖 **Welcome to the Super Bot!**\n\nChoose an option from the menu below:",
+        'help_text': "📖 **How to use me:**\n\n📥 **Download:** Click a social media button and paste your link.\n🎨 **AI Image:** Tell me what to draw.\n🔳 **QR Code:** Turn any text/link into a QR code.\n🗣️ **Voice Maker:** Type text, and I will speak it out loud!",
         'choose_lang': "🌐 Please choose your language:",
         'lang_set': "✅ Language set to English!\n\n",
         'choose_format': "🔗 Link detected! Choose your format:",
         'downloading': "Downloading... please wait ⏳",
-        'ask_prompt': "🎨 **AI Image Maker**\n\nType a description of what you want me to draw (e.g., 'A cyberpunk cat' or 'A beautiful sunset over the mountains').",
+        'ask_prompt': "🎨 **AI Image Maker**\n\nType a description of what you want me to draw.",
         'generating': "🎨 Painting your masterpiece... Please wait ⏳",
         'ask_yt': "🔴 Please paste your **YouTube** link below:",
         'ask_ig': "📸 Please paste your **Instagram** link below:",
         'ask_tt': "🎵 Please paste your **TikTok** link below:",
-        'invalid_yt': "❌ That doesn't look like a YouTube link. Please try again:",
-        'invalid_ig': "❌ That doesn't look like an Instagram link. Please try again:",
-        'invalid_tt': "❌ That doesn't look like a TikTok link. Please try again:",
+        'invalid_yt': "❌ That doesn't look like a YouTube link. Try again:",
+        'invalid_ig': "❌ That doesn't look like an Instagram link. Try again:",
+        'invalid_tt': "❌ That doesn't look like a TikTok link. Try again:",
+        'ask_qr': "🔳 **QR Code Generator**\n\nSend me any text or link, and I will turn it into a QR code!",
+        'ask_tts': "🗣️ **Voice Maker**\n\nSend me any text, and I will read it out loud for you!",
         'error': "❌ Error:",
-        'btn_help': "Help ℹ️",
-        'btn_lang': "Language 🌐",
-        'btn_image': "AI Image Maker 🎨",
-        'btn_back': "Back 🔙"
+        'btn_help': "Help ℹ️", 'btn_lang': "Language 🌐", 'btn_image': "AI Image 🎨",
+        'btn_qr': "QR Code 🔳", 'btn_tts': "Voice Maker 🗣️", 'btn_back': "Back 🔙"
     },
     'es': {
-        'main_menu': "🤖 **¡Bienvenido al Media Bot!**\n\nElige una opción del menú de abajo:",
-        'help_text': (
-            "📖 **Cómo usarme:**\n\n"
-            "📥 **Para Descargar:** Haz clic en YouTube, TikTok o Instagram, luego pega tu enlace.\n"
-            "🎨 **Para Crear Arte:** Haz clic en Imagen IA y dime qué dibujar.\n\n"
-        ),
-        'choose_lang': "🌐 Por favor, elige tu idioma:",
-        'lang_set': "✅ ¡Idioma cambiado a Español!\n\n",
-        'choose_format': "🔗 ¡Enlace detectado! Elige el formato:",
-        'downloading': "Descargando... por favor espera ⏳",
-        'ask_prompt': "🎨 **Creador de Imágenes IA**\n\nEscribe qué quieres que dibuje (ej. 'Un gato ciberpunk' o 'Un hermoso atardecer').",
+        'main_menu': "🤖 **¡Bienvenido al Súper Bot!**\n\nElige una opción del menú de abajo:",
+        'help_text': "📖 **Cómo usarme:**\n\n📥 **Descargar:** Haz clic en una red social y pega tu enlace.\n🎨 **Imagen IA:** Dime qué dibujar.\n🔳 **Código QR:** Convierte texto/enlace en un QR.\n🗣️ **Voz:** ¡Escribe texto y lo leeré en voz alta!",
+        'choose_lang': "🌐 Por favor, elige tu idioma:", 'lang_set': "✅ ¡Idioma cambiado a Español!\n\n",
+        'choose_format': "🔗 ¡Enlace detectado! Elige el formato:", 'downloading': "Descargando... por favor espera ⏳",
+        'ask_prompt': "🎨 **Creador de Imágenes IA**\n\nEscribe qué quieres que dibuje.",
         'generating': "🎨 Pintando tu obra maestra... Por favor espera ⏳",
-        'ask_yt': "🔴 Por favor pega tu enlace de **YouTube** abajo:",
-        'ask_ig': "📸 Por favor pega tu enlace de **Instagram** abajo:",
-        'ask_tt': "🎵 Por favor pega tu enlace de **TikTok** abajo:",
-        'invalid_yt': "❌ Ese no parece un enlace de YouTube. Inténtalo de nuevo:",
-        'invalid_ig': "❌ Ese no parece un enlace de Instagram. Inténtalo de nuevo:",
-        'invalid_tt': "❌ Ese no parece un enlace de TikTok. Inténtalo de nuevo:",
-        'error': "❌ Error:",
-        'btn_help': "Ayuda ℹ️",
-        'btn_lang': "Idioma 🌐",
-        'btn_image': "Imagen IA 🎨",
-        'btn_back': "Volver 🔙"
+        'ask_yt': "🔴 Pega tu enlace de **YouTube** abajo:", 'ask_ig': "📸 Pega tu enlace de **Instagram** abajo:", 'ask_tt': "🎵 Pega tu enlace de **TikTok** abajo:",
+        'invalid_yt': "❌ Ese no parece un enlace de YouTube. Inténtalo de nuevo:", 'invalid_ig': "❌ Ese no parece un enlace de Instagram. Inténtalo de nuevo:", 'invalid_tt': "❌ Ese no parece un enlace de TikTok. Inténtalo de nuevo:",
+        'ask_qr': "🔳 **Generador QR**\n\n¡Envíame cualquier texto o enlace y lo convertiré en un QR!",
+        'ask_tts': "🗣️ **Creador de Voz**\n\n¡Envíame un texto y lo leeré en voz alta!",
+        'error': "❌ Error:", 'btn_help': "Ayuda ℹ️", 'btn_lang': "Idioma 🌐", 'btn_image': "Imagen IA 🎨", 'btn_qr': "Código QR 🔳", 'btn_tts': "Voz IA 🗣️", 'btn_back': "Volver 🔙"
+    },
+    'fr': {
+        'main_menu': "🤖 **Bienvenue sur le Super Bot !**\n\nChoisissez une option ci-dessous :",
+        'help_text': "📖 **Comment m'utiliser :**\n\n📥 **Télécharger:** Cliquez sur un réseau social et collez votre lien.\n🎨 **Image IA:** Dites-moi quoi dessiner.\n🔳 **Code QR:** Transformez n'importe quel texte/lien en QR.\n🗣️ **Voix:** Tapez un texte et je le lirai !",
+        'choose_lang': "🌐 Choisissez votre langue :", 'lang_set': "✅ Langue configurée sur Français !\n\n",
+        'choose_format': "🔗 Lien détecté ! Choisissez le format :", 'downloading': "Téléchargement... veuillez patienter ⏳",
+        'ask_prompt': "🎨 **Créateur d'Image IA**\n\nDécrivez ce que vous voulez que je dessine.",
+        'generating': "🎨 Création de votre chef-d'œuvre... Patientez ⏳",
+        'ask_yt': "🔴 Collez votre lien **YouTube** ci-dessous :", 'ask_ig': "📸 Collez votre lien **Instagram** ci-dessous :", 'ask_tt': "🎵 Collez votre lien **TikTok** ci-dessous :",
+        'invalid_yt': "❌ Ce n'est pas un lien YouTube. Réessayez :", 'invalid_ig': "❌ Ce n'est pas un lien Instagram. Réessayez :", 'invalid_tt': "❌ Ce n'est pas un lien TikTok. Réessayez :",
+        'ask_qr': "🔳 **Générateur QR**\n\nEnvoyez-moi un texte ou un lien pour créer un QR code !",
+        'ask_tts': "🗣️ **Créateur de Voix**\n\nEnvoyez-moi un texte et je le lirai à voix haute !",
+        'error': "❌ Erreur :", 'btn_help': "Aide ℹ️", 'btn_lang': "Langue 🌐", 'btn_image': "Image IA 🎨", 'btn_qr': "Code QR 🔳", 'btn_tts': "Voix IA 🗣️", 'btn_back': "Retour 🔙"
+    },
+    'pt': {
+        'main_menu': "🤖 **Bem-vindo ao Super Bot!**\n\nEscolha uma opção no menu abaixo:",
+        'help_text': "📖 **Como me usar:**\n\n📥 **Baixar:** Clique em uma rede social e cole o link.\n🎨 **Imagem IA:** Diga o que desenhar.\n🔳 **Código QR:** Transforme texto/link em um QR.\n🗣️ **Voz:** Digite algo e eu falarei em voz alta!",
+        'choose_lang': "🌐 Escolha seu idioma:", 'lang_set': "✅ Idioma definido para Português!\n\n",
+        'choose_format': "🔗 Link detectado! Escolha o formato:", 'downloading': "Baixando... por favor aguarde ⏳",
+        'ask_prompt': "🎨 **Criador de Imagem IA**\n\nDescreva o que deseja que eu desenhe.",
+        'generating': "🎨 Pintando sua obra-prima... Aguarde ⏳",
+        'ask_yt': "🔴 Cole seu link do **YouTube** abaixo:", 'ask_ig': "📸 Cole seu link do **Instagram** abaixo:", 'ask_tt': "🎵 Cole seu link do **TikTok** abaixo:",
+        'invalid_yt': "❌ Isso não parece um link do YouTube. Tente novamente:", 'invalid_ig': "❌ Isso não parece um link do Instagram. Tente novamente:", 'invalid_tt': "❌ Isso não parece um link do TikTok. Tente novamente:",
+        'ask_qr': "🔳 **Gerador QR**\n\nEnvie qualquer texto ou link e eu farei um código QR!",
+        'ask_tts': "🗣️ **Criador de Voz**\n\nEnvie um texto e eu lerei em voz alta!",
+        'error': "❌ Erro:", 'btn_help': "Ajuda ℹ️", 'btn_lang': "Idioma 🌐", 'btn_image': "Imagem IA 🎨", 'btn_qr': "Código QR 🔳", 'btn_tts': "Voz IA 🗣️", 'btn_back': "Voltar 🔙"
+    },
+    'ar': {
+        'main_menu': "🤖 **مرحباً بك في الروبوت الخارق!**\n\nاختر خياراً من القائمة أدناه:",
+        'help_text': "📖 **كيف تستخدم الروبوت:**\n\n📥 **للتحميل:** انقر فوق شبكة اجتماعية والصق الرابط.\n🎨 **صورة الذكاء الاصطناعي:** أخبرني ماذا أرسم.\n🔳 **رمز QR:** تحويل أي نص/رابط إلى رمز استجابة سريعة.\n🗣️ **الصوت:** اكتب نصاً وسأقرأه بصوت عالٍ!",
+        'choose_lang': "🌐 يرجى اختيار لغتك:", 'lang_set': "✅ تم تعيين اللغة إلى العربية!\n\n",
+        'choose_format': "🔗 تم اكتشاف رابط! اختر التنسيق:", 'downloading': "جاري التنزيل... يرجى الانتظار ⏳",
+        'ask_prompt': "🎨 **صانع صور الذكاء الاصطناعي**\n\nاكتب وصفًا لما تريدني أن أرسمه.",
+        'generating': "🎨 جاري رسم تحفتك الفنية... يرجى الانتظار ⏳",
+        'ask_yt': "🔴 يرجى لصق رابط **يوتيوب** أدناه:", 'ask_ig': "📸 يرجى لصق رابط **إنستغرام** أدناه:", 'ask_tt': "🎵 يرجى لصق رابط **تيك توك** أدناه:",
+        'invalid_yt': "❌ هذا لا يبدو كرابط يوتيوب. حاول مرة أخرى:", 'invalid_ig': "❌ هذا لا يبدو كرابط إنستغرام. حاول مرة أخرى:", 'invalid_tt': "❌ هذا لا يبدو كرابط تيك توك. حاول مرة أخرى:",
+        'ask_qr': "🔳 **مولد رمز QR**\n\nأرسل لي أي نص أو رابط وسأحوله إلى رمز استجابة سريعة!",
+        'ask_tts': "🗣️ **صانع الصوت**\n\nأرسل لي نصاً وسأقرأه بصوت عالٍ من أجلك!",
+        'error': "❌ خطأ:", 'btn_help': "مساعدة ℹ️", 'btn_lang': "اللغة 🌐", 'btn_image': "صورة ذكاء اصطناعي 🎨", 'btn_qr': "رمز QR 🔳", 'btn_tts': "صوت 🗣️", 'btn_back': "رجوع 🔙"
     }
 }
 
@@ -86,7 +111,9 @@ def main_menu_keyboard(user_id):
         [InlineKeyboardButton("YouTube 🔴", callback_data='ask_yt'),
          InlineKeyboardButton("Instagram 📸", callback_data='ask_ig'),
          InlineKeyboardButton("TikTok 🎵", callback_data='ask_tt')],
-        [InlineKeyboardButton(get_text(user_id, 'btn_image'), callback_data='ask_image')],
+        [InlineKeyboardButton(get_text(user_id, 'btn_image'), callback_data='ask_image'),
+         InlineKeyboardButton(get_text(user_id, 'btn_qr'), callback_data='ask_qr'),
+         InlineKeyboardButton(get_text(user_id, 'btn_tts'), callback_data='ask_tts')],
         [InlineKeyboardButton(get_text(user_id, 'btn_help'), callback_data='show_help'),
          InlineKeyboardButton(get_text(user_id, 'btn_lang'), callback_data='show_lang')]
     ])
@@ -107,9 +134,32 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     text_lower = text.lower()
     state = user_states.get(user_id)
+    lang_code = user_languages.get(user_id, 'en')
+
+    # --- QR CODE MAKER ---
+    if state == 'waiting_for_qr':
+        user_states[user_id] = None 
+        safe_text = urllib.parse.quote(text)
+        qr_url = f"https://api.qrserver.com/v1/create-qr-code/?size=512x512&data={safe_text}"
+        await context.bot.send_photo(chat_id=user_id, photo=qr_url, caption="✅ QR Code")
+        await update.message.reply_text(get_text(user_id, 'main_menu'), reply_markup=main_menu_keyboard(user_id))
+
+    # --- TEXT TO SPEECH (VOICE MAKER) ---
+    elif state == 'waiting_for_tts':
+        user_states[user_id] = None 
+        try:
+            tts = gTTS(text=text, lang=lang_code)
+            filename = f"{user_id}_voice.mp3"
+            tts.save(filename)
+            with open(filename, 'rb') as voice:
+                await context.bot.send_voice(chat_id=user_id, voice=voice)
+            os.remove(filename)
+        except Exception as e:
+            await update.message.reply_text(f"{get_text(user_id, 'error')} {str(e)}")
+        await update.message.reply_text(get_text(user_id, 'main_menu'), reply_markup=main_menu_keyboard(user_id))
 
     # --- AI IMAGE GENERATOR ---
-    if state == 'waiting_for_image':
+    elif state == 'waiting_for_image':
         user_states[user_id] = None 
         msg = await update.message.reply_text(get_text(user_id, 'generating'))
         try:
@@ -117,8 +167,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             image_url = f"https://image.pollinations.ai/prompt/{safe_prompt}?width=1920&height=1080&nologo=true"
             response = requests.get(image_url)
             image_filename = f"{user_id}_ai.jpg"
-            with open(image_filename, 'wb') as f:
-                f.write(response.content)
+            with open(image_filename, 'wb') as f: f.write(response.content)
             with open(image_filename, 'rb') as photo:
                 await context.bot.send_photo(chat_id=user_id, photo=photo, caption=f"🎨 {text}")
             os.remove(image_filename) 
@@ -127,47 +176,34 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             await msg.edit_text(f"{get_text(user_id, 'error')} {str(e)}")
 
-    # --- STRICT LINK VALIDATION (THE FIX) ---
+    # --- STRICT LINK VALIDATION ---
     elif state in ['waiting_for_yt', 'waiting_for_ig', 'waiting_for_tt']:
-        
-        # Check if the user pasted a YouTube link in the YouTube section
         if state == 'waiting_for_yt' and not ('youtube.com' in text_lower or 'youtu.be' in text_lower):
             await update.message.reply_text(get_text(user_id, 'invalid_yt'), reply_markup=back_keyboard(user_id))
             return
-            
-        # Check if the user pasted an IG link in the IG section
         elif state == 'waiting_for_ig' and 'instagram.com' not in text_lower:
             await update.message.reply_text(get_text(user_id, 'invalid_ig'), reply_markup=back_keyboard(user_id))
             return
-            
-        # Check if the user pasted a TT link in the TikTok section
         elif state == 'waiting_for_tt' and 'tiktok.com' not in text_lower:
             await update.message.reply_text(get_text(user_id, 'invalid_tt'), reply_markup=back_keyboard(user_id))
             return
 
-        # If it passes the check, proceed to download formats!
         user_states[user_id] = None 
         context.user_data['last_link'] = text 
         keyboard = [
-            [InlineKeyboardButton("🎬 Video (Best Quality)", callback_data='dl_mp4_best')],
-            [InlineKeyboardButton("📱 Video (Low Quality)", callback_data='dl_mp4_low')],
-            [InlineKeyboardButton("🎵 Audio Only (MP3)", callback_data='dl_mp3')],
-            [InlineKeyboardButton(get_text(user_id, 'btn_back'), callback_data='show_main')]
+            [InlineKeyboardButton("🎬 Video (Best)", callback_data='dl_mp4_best'), InlineKeyboardButton("📱 Video (Low)", callback_data='dl_mp4_low')],
+            [InlineKeyboardButton("🎵 Audio (MP3)", callback_data='dl_mp3'), InlineKeyboardButton(get_text(user_id, 'btn_back'), callback_data='show_main')]
         ]
         await update.message.reply_text(get_text(user_id, 'choose_format'), reply_markup=InlineKeyboardMarkup(keyboard))
         
-    # --- IF THEY SEND A LINK WITHOUT CLICKING A BUTTON FIRST ---
     elif "http://" in text or "https://" in text:
         context.user_data['last_link'] = text 
         keyboard = [
-            [InlineKeyboardButton("🎬 Video (Best Quality)", callback_data='dl_mp4_best')],
-            [InlineKeyboardButton("📱 Video (Low Quality)", callback_data='dl_mp4_low')],
-            [InlineKeyboardButton("🎵 Audio Only (MP3)", callback_data='dl_mp3')],
-            [InlineKeyboardButton(get_text(user_id, 'btn_back'), callback_data='show_main')]
+            [InlineKeyboardButton("🎬 Video (Best)", callback_data='dl_mp4_best'), InlineKeyboardButton("📱 Video (Low)", callback_data='dl_mp4_low')],
+            [InlineKeyboardButton("🎵 Audio (MP3)", callback_data='dl_mp3'), InlineKeyboardButton(get_text(user_id, 'btn_back'), callback_data='show_main')]
         ]
         await update.message.reply_text(get_text(user_id, 'choose_format'), reply_markup=InlineKeyboardMarkup(keyboard))
 
-    # --- UNKNOWN MESSAGES ---
     else:
         await update.message.reply_text(get_text(user_id, 'main_menu'), reply_markup=main_menu_keyboard(user_id))
 
@@ -177,7 +213,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = query.from_user.id
     await query.answer()
 
-    # --- Menu Navigation ---
     if query.data == 'show_main':
         user_states[user_id] = None 
         await query.edit_message_text(get_text(user_id, 'main_menu'), reply_markup=main_menu_keyboard(user_id))
@@ -187,51 +222,52 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
     elif query.data == 'show_lang':
         keyboard = [
-            [InlineKeyboardButton("English 🇬🇧", callback_data='lang_en')],
-            [InlineKeyboardButton("Español 🇪🇸", callback_data='lang_es')],
+            [InlineKeyboardButton("English 🇬🇧", callback_data='lang_en'), InlineKeyboardButton("Español 🇪🇸", callback_data='lang_es')],
+            [InlineKeyboardButton("Français 🇫🇷", callback_data='lang_fr'), InlineKeyboardButton("Português 🇧🇷", callback_data='lang_pt')],
+            [InlineKeyboardButton("العربية 🇸🇦", callback_data='lang_ar')],
             [InlineKeyboardButton(get_text(user_id, 'btn_back'), callback_data='show_main')]
         ]
         await query.edit_message_text(get_text(user_id, 'choose_lang'), reply_markup=InlineKeyboardMarkup(keyboard))
 
-    # --- Platform Link Requests (Sets the State) ---
-    elif query.data == 'ask_yt':
-        user_states[user_id] = 'waiting_for_yt' # BOT NOW REMEMBERS YOU CLICKED YOUTUBE
-        await query.edit_message_text(get_text(user_id, 'ask_yt'), reply_markup=back_keyboard(user_id))
+    # New Tool Buttons
+    elif query.data == 'ask_qr':
+        user_states[user_id] = 'waiting_for_qr'
+        await query.edit_message_text(get_text(user_id, 'ask_qr'), reply_markup=back_keyboard(user_id))
         
-    elif query.data == 'ask_ig':
-        user_states[user_id] = 'waiting_for_ig' # BOT NOW REMEMBERS YOU CLICKED IG
-        await query.edit_message_text(get_text(user_id, 'ask_ig'), reply_markup=back_keyboard(user_id))
-        
-    elif query.data == 'ask_tt':
-        user_states[user_id] = 'waiting_for_tt' # BOT NOW REMEMBERS YOU CLICKED TIKTOK
-        await query.edit_message_text(get_text(user_id, 'ask_tt'), reply_markup=back_keyboard(user_id))
+    elif query.data == 'ask_tts':
+        user_states[user_id] = 'waiting_for_tts'
+        await query.edit_message_text(get_text(user_id, 'ask_tts'), reply_markup=back_keyboard(user_id))
 
-    # --- Start AI Image Process ---
+    elif query.data == 'ask_yt':
+        user_states[user_id] = 'waiting_for_yt' 
+        await query.edit_message_text(get_text(user_id, 'ask_yt'), reply_markup=back_keyboard(user_id))
+    elif query.data == 'ask_ig':
+        user_states[user_id] = 'waiting_for_ig' 
+        await query.edit_message_text(get_text(user_id, 'ask_ig'), reply_markup=back_keyboard(user_id))
+    elif query.data == 'ask_tt':
+        user_states[user_id] = 'waiting_for_tt' 
+        await query.edit_message_text(get_text(user_id, 'ask_tt'), reply_markup=back_keyboard(user_id))
     elif query.data == 'ask_image':
         user_states[user_id] = 'waiting_for_image' 
         await query.edit_message_text(get_text(user_id, 'ask_prompt'), reply_markup=back_keyboard(user_id))
 
-    # --- Language Selection ---
-    elif query.data in ['lang_en', 'lang_es']:
-        user_languages[user_id] = query.data.split('_')[1]
+    # Languages Setup
+    elif query.data.startswith('lang_'):
+        user_languages[user_id] = query.data.split('_')[1] # Gets 'en', 'es', 'fr', 'pt', or 'ar'
         new_text = get_text(user_id, 'lang_set') + get_text(user_id, 'main_menu')
         await query.edit_message_text(new_text, reply_markup=main_menu_keyboard(user_id))
 
-    # --- Download Media ---
     elif query.data.startswith('dl_'):
         link = context.user_data.get('last_link')
         if not link: return
             
         await query.edit_message_text(get_text(user_id, 'downloading'))
-        
         for old_file in glob.glob(f"{user_id}_media*"):
             if os.path.exists(old_file): os.remove(old_file)
 
         ydl_opts = {
             'ffmpeg_location': FFMPEG_PATH, 
-            'outtmpl': f'{user_id}_media.%(ext)s',
-            'noplaylist': True,
-            'quiet': True,
+            'outtmpl': f'{user_id}_media.%(ext)s', 'noplaylist': True, 'quiet': True,
             'extractor_args': {'youtube': ['player_client=ios']}, 
         }
         
@@ -242,9 +278,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ydl_opts['postprocessors'] = [{'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3', 'preferredquality': '192'}]
 
         try:
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                ydl.download([link])
-
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl: ydl.download([link])
             downloaded_files = glob.glob(f"{user_id}_media*")
             if downloaded_files:
                 final_file = downloaded_files[0]
@@ -252,11 +286,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     with open(final_file, 'rb') as audio: await context.bot.send_audio(chat_id=user_id, audio=audio)
                 else:
                     with open(final_file, 'rb') as video: await context.bot.send_video(chat_id=user_id, video=video)
-            else:
-                raise Exception("Could not locate the downloaded file.")
-        except Exception as e:
-            error_msg = f"{get_text(user_id, 'error')} {str(e)}"
-            await context.bot.send_message(chat_id=user_id, text=error_msg)
+            else: raise Exception("Could not locate the downloaded file.")
+        except Exception as e: await context.bot.send_message(chat_id=user_id, text=f"{get_text(user_id, 'error')} {str(e)}")
         finally:
             for f in glob.glob(f"{user_id}_media*"):
                 if os.path.exists(f): os.remove(f)
