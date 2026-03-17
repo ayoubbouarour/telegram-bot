@@ -40,6 +40,9 @@ TEXTS = {
         'ask_yt': "🔴 Please paste your **YouTube** link below:",
         'ask_ig': "📸 Please paste your **Instagram** link below:",
         'ask_tt': "🎵 Please paste your **TikTok** link below:",
+        'invalid_yt': "❌ That doesn't look like a YouTube link. Please try again:",
+        'invalid_ig': "❌ That doesn't look like an Instagram link. Please try again:",
+        'invalid_tt': "❌ That doesn't look like a TikTok link. Please try again:",
         'error': "❌ Error:",
         'btn_help': "Help ℹ️",
         'btn_lang': "Language 🌐",
@@ -62,6 +65,9 @@ TEXTS = {
         'ask_yt': "🔴 Por favor pega tu enlace de **YouTube** abajo:",
         'ask_ig': "📸 Por favor pega tu enlace de **Instagram** abajo:",
         'ask_tt': "🎵 Por favor pega tu enlace de **TikTok** abajo:",
+        'invalid_yt': "❌ Ese no parece un enlace de YouTube. Inténtalo de nuevo:",
+        'invalid_ig': "❌ Ese no parece un enlace de Instagram. Inténtalo de nuevo:",
+        'invalid_tt': "❌ Ese no parece un enlace de TikTok. Inténtalo de nuevo:",
         'error': "❌ Error:",
         'btn_help': "Ayuda ℹ️",
         'btn_lang': "Idioma 🌐",
@@ -77,13 +83,10 @@ def get_text(user_id, key):
 # --- 3. MENU GENERATORS ---
 def main_menu_keyboard(user_id):
     return InlineKeyboardMarkup([
-        # Row 1: Social Media Buttons
         [InlineKeyboardButton("YouTube 🔴", callback_data='ask_yt'),
          InlineKeyboardButton("Instagram 📸", callback_data='ask_ig'),
          InlineKeyboardButton("TikTok 🎵", callback_data='ask_tt')],
-        # Row 2: AI Image Button
         [InlineKeyboardButton(get_text(user_id, 'btn_image'), callback_data='ask_image')],
-        # Row 3: Settings Buttons
         [InlineKeyboardButton(get_text(user_id, 'btn_help'), callback_data='show_help'),
          InlineKeyboardButton(get_text(user_id, 'btn_lang'), callback_data='show_lang')]
     ])
@@ -102,38 +105,48 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     text = update.message.text
+    text_lower = text.lower()
     state = user_states.get(user_id)
 
     # --- AI IMAGE GENERATOR ---
     if state == 'waiting_for_image':
-        user_states[user_id] = None # Reset state
+        user_states[user_id] = None 
         msg = await update.message.reply_text(get_text(user_id, 'generating'))
-        
         try:
             safe_prompt = urllib.parse.quote(text)
-            # Create a high-quality image URL
             image_url = f"https://image.pollinations.ai/prompt/{safe_prompt}?width=1920&height=1080&nologo=true"
-            
-            # Download the image
             response = requests.get(image_url)
             image_filename = f"{user_id}_ai.jpg"
             with open(image_filename, 'wb') as f:
                 f.write(response.content)
-                
-            # MAGIC FIX: Send as 'Photo' so it shows up instantly in the chat!
             with open(image_filename, 'rb') as photo:
                 await context.bot.send_photo(chat_id=user_id, photo=photo, caption=f"🎨 {text}")
-                
             os.remove(image_filename) 
-            await msg.delete() # Remove the "generating..." text
+            await msg.delete() 
             await update.message.reply_text(get_text(user_id, 'main_menu'), reply_markup=main_menu_keyboard(user_id))
-            
         except Exception as e:
             await msg.edit_text(f"{get_text(user_id, 'error')} {str(e)}")
 
-    # --- VIDEO DOWNLOADER ---
-    elif "http://" in text or "https://" in text:
-        user_states[user_id] = None # Reset state
+    # --- STRICT LINK VALIDATION (THE FIX) ---
+    elif state in ['waiting_for_yt', 'waiting_for_ig', 'waiting_for_tt']:
+        
+        # Check if the user pasted a YouTube link in the YouTube section
+        if state == 'waiting_for_yt' and not ('youtube.com' in text_lower or 'youtu.be' in text_lower):
+            await update.message.reply_text(get_text(user_id, 'invalid_yt'), reply_markup=back_keyboard(user_id))
+            return
+            
+        # Check if the user pasted an IG link in the IG section
+        elif state == 'waiting_for_ig' and 'instagram.com' not in text_lower:
+            await update.message.reply_text(get_text(user_id, 'invalid_ig'), reply_markup=back_keyboard(user_id))
+            return
+            
+        # Check if the user pasted a TT link in the TikTok section
+        elif state == 'waiting_for_tt' and 'tiktok.com' not in text_lower:
+            await update.message.reply_text(get_text(user_id, 'invalid_tt'), reply_markup=back_keyboard(user_id))
+            return
+
+        # If it passes the check, proceed to download formats!
+        user_states[user_id] = None 
         context.user_data['last_link'] = text 
         keyboard = [
             [InlineKeyboardButton("🎬 Video (Best Quality)", callback_data='dl_mp4_best')],
@@ -143,9 +156,21 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]
         await update.message.reply_text(get_text(user_id, 'choose_format'), reply_markup=InlineKeyboardMarkup(keyboard))
         
+    # --- IF THEY SEND A LINK WITHOUT CLICKING A BUTTON FIRST ---
+    elif "http://" in text or "https://" in text:
+        context.user_data['last_link'] = text 
+        keyboard = [
+            [InlineKeyboardButton("🎬 Video (Best Quality)", callback_data='dl_mp4_best')],
+            [InlineKeyboardButton("📱 Video (Low Quality)", callback_data='dl_mp4_low')],
+            [InlineKeyboardButton("🎵 Audio Only (MP3)", callback_data='dl_mp3')],
+            [InlineKeyboardButton(get_text(user_id, 'btn_back'), callback_data='show_main')]
+        ]
+        await update.message.reply_text(get_text(user_id, 'choose_format'), reply_markup=InlineKeyboardMarkup(keyboard))
+
     # --- UNKNOWN MESSAGES ---
     else:
         await update.message.reply_text(get_text(user_id, 'main_menu'), reply_markup=main_menu_keyboard(user_id))
+
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -168,12 +193,17 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]
         await query.edit_message_text(get_text(user_id, 'choose_lang'), reply_markup=InlineKeyboardMarkup(keyboard))
 
-    # --- Platform Link Requests ---
+    # --- Platform Link Requests (Sets the State) ---
     elif query.data == 'ask_yt':
+        user_states[user_id] = 'waiting_for_yt' # BOT NOW REMEMBERS YOU CLICKED YOUTUBE
         await query.edit_message_text(get_text(user_id, 'ask_yt'), reply_markup=back_keyboard(user_id))
+        
     elif query.data == 'ask_ig':
+        user_states[user_id] = 'waiting_for_ig' # BOT NOW REMEMBERS YOU CLICKED IG
         await query.edit_message_text(get_text(user_id, 'ask_ig'), reply_markup=back_keyboard(user_id))
+        
     elif query.data == 'ask_tt':
+        user_states[user_id] = 'waiting_for_tt' # BOT NOW REMEMBERS YOU CLICKED TIKTOK
         await query.edit_message_text(get_text(user_id, 'ask_tt'), reply_markup=back_keyboard(user_id))
 
     # --- Start AI Image Process ---
