@@ -21,22 +21,25 @@ def keep_alive(): Thread(target=run_flask).start()
 
 # --- 2. DATABASE (Memory & Languages) ---
 user_languages = {}
-user_states = {} # Remembers if the user is typing an AI prompt or just navigating menus
+user_states = {} 
 
 TEXTS = {
     'en': {
-        'main_menu': "🤖 **Welcome to the Media Bot!**\n\n🔗 Send a video link to download, or use the AI Image Maker below.",
+        'main_menu': "🤖 **Welcome to the Media Bot!**\n\nChoose an option from the menu below:",
         'help_text': (
             "📖 **How to use me:**\n\n"
-            "📥 **To Download:** Just paste a YouTube, TikTok, or Instagram link in the chat.\n"
+            "📥 **To Download:** Click YouTube, TikTok, or Instagram, then paste your link.\n"
             "🎨 **To Make Art:** Click the AI Image button and tell me what to draw.\n\n"
         ),
         'choose_lang': "🌐 Please choose your language:",
         'lang_set': "✅ Language set to English!\n\n",
         'choose_format': "🔗 Link detected! Choose your format:",
-        'downloading': "Downloading... please wait ⏳ (This might take a minute)",
-        'ask_prompt': "🎨 **AI 4K Image Maker**\n\nType a description of what you want me to draw (e.g., 'A futuristic city at sunset' or 'A cyberpunk cat').\n\nOr click Back to cancel.",
-        'generating': "🎨 Creating your 4K masterpiece... Please wait ⏳",
+        'downloading': "Downloading... please wait ⏳",
+        'ask_prompt': "🎨 **AI Image Maker**\n\nType a description of what you want me to draw (e.g., 'A cyberpunk cat' or 'A beautiful sunset over the mountains').",
+        'generating': "🎨 Painting your masterpiece... Please wait ⏳",
+        'ask_yt': "🔴 Please paste your **YouTube** link below:",
+        'ask_ig': "📸 Please paste your **Instagram** link below:",
+        'ask_tt': "🎵 Please paste your **TikTok** link below:",
         'error': "❌ Error:",
         'btn_help': "Help ℹ️",
         'btn_lang': "Language 🌐",
@@ -44,22 +47,25 @@ TEXTS = {
         'btn_back': "Back 🔙"
     },
     'es': {
-        'main_menu': "🤖 **¡Bienvenido al Media Bot!**\n\n🔗 Envía un enlace para descargar, o usa el Creador de Imágenes IA abajo.",
+        'main_menu': "🤖 **¡Bienvenido al Media Bot!**\n\nElige una opción del menú de abajo:",
         'help_text': (
             "📖 **Cómo usarme:**\n\n"
-            "📥 **Para Descargar:** Solo pega un enlace de YouTube, TikTok o Instagram en el chat.\n"
-            "🎨 **Para Crear Arte:** Haz clic en el botón de Imagen IA y dime qué dibujar.\n\n"
+            "📥 **Para Descargar:** Haz clic en YouTube, TikTok o Instagram, luego pega tu enlace.\n"
+            "🎨 **Para Crear Arte:** Haz clic en Imagen IA y dime qué dibujar.\n\n"
         ),
         'choose_lang': "🌐 Por favor, elige tu idioma:",
         'lang_set': "✅ ¡Idioma cambiado a Español!\n\n",
         'choose_format': "🔗 ¡Enlace detectado! Elige el formato:",
-        'downloading': "Descargando... por favor espera ⏳ (Puede tardar)",
-        'ask_prompt': "🎨 **Creador de Imágenes IA 4K**\n\nEscribe una descripción de lo que quieres que dibuje (ej. 'Una ciudad futurista al atardecer' o 'Un gato ciberpunk').\n\nO haz clic en Volver para cancelar.",
-        'generating': "🎨 Creando tu obra maestra en 4K... Por favor espera ⏳",
+        'downloading': "Descargando... por favor espera ⏳",
+        'ask_prompt': "🎨 **Creador de Imágenes IA**\n\nEscribe qué quieres que dibuje (ej. 'Un gato ciberpunk' o 'Un hermoso atardecer').",
+        'generating': "🎨 Pintando tu obra maestra... Por favor espera ⏳",
+        'ask_yt': "🔴 Por favor pega tu enlace de **YouTube** abajo:",
+        'ask_ig': "📸 Por favor pega tu enlace de **Instagram** abajo:",
+        'ask_tt': "🎵 Por favor pega tu enlace de **TikTok** abajo:",
         'error': "❌ Error:",
         'btn_help': "Ayuda ℹ️",
         'btn_lang': "Idioma 🌐",
-        'btn_image': "Creador de Imágenes IA 🎨",
+        'btn_image': "Imagen IA 🎨",
         'btn_back': "Volver 🔙"
     }
 }
@@ -71,7 +77,13 @@ def get_text(user_id, key):
 # --- 3. MENU GENERATORS ---
 def main_menu_keyboard(user_id):
     return InlineKeyboardMarkup([
+        # Row 1: Social Media Buttons
+        [InlineKeyboardButton("YouTube 🔴", callback_data='ask_yt'),
+         InlineKeyboardButton("Instagram 📸", callback_data='ask_ig'),
+         InlineKeyboardButton("TikTok 🎵", callback_data='ask_tt')],
+        # Row 2: AI Image Button
         [InlineKeyboardButton(get_text(user_id, 'btn_image'), callback_data='ask_image')],
+        # Row 3: Settings Buttons
         [InlineKeyboardButton(get_text(user_id, 'btn_help'), callback_data='show_help'),
          InlineKeyboardButton(get_text(user_id, 'btn_lang'), callback_data='show_lang')]
     ])
@@ -84,7 +96,7 @@ def back_keyboard(user_id):
 # --- 4. BOT COMMANDS & HANDLERS ---
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
-    user_states[user_id] = None # Reset state
+    user_states[user_id] = None 
     await update.message.reply_text(get_text(user_id, 'main_menu'), reply_markup=main_menu_keyboard(user_id))
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -92,37 +104,36 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     state = user_states.get(user_id)
 
-    # If the bot is waiting for an AI image prompt
+    # --- AI IMAGE GENERATOR ---
     if state == 'waiting_for_image':
         user_states[user_id] = None # Reset state
-        await update.message.reply_text(get_text(user_id, 'generating'))
+        msg = await update.message.reply_text(get_text(user_id, 'generating'))
         
         try:
-            # Format the prompt for the AI API (width=3840 & height=2160 makes it 4K)
             safe_prompt = urllib.parse.quote(text)
-            image_url = f"https://image.pollinations.ai/prompt/{safe_prompt}?width=3840&height=2160&nologo=true"
+            # Create a high-quality image URL
+            image_url = f"https://image.pollinations.ai/prompt/{safe_prompt}?width=1920&height=1080&nologo=true"
             
-            # Download the image to the server temporarily
+            # Download the image
             response = requests.get(image_url)
-            image_filename = f"{user_id}_ai_image.jpg"
-            
+            image_filename = f"{user_id}_ai.jpg"
             with open(image_filename, 'wb') as f:
                 f.write(response.content)
                 
-            # Send as a DOCUMENT so Telegram doesn't compress the 4K quality!
-            with open(image_filename, 'rb') as doc:
-                await context.bot.send_document(chat_id=user_id, document=doc, filename="4K_AI_Artwork.jpg", caption=f"🎨 {text}")
+            # MAGIC FIX: Send as 'Photo' so it shows up instantly in the chat!
+            with open(image_filename, 'rb') as photo:
+                await context.bot.send_photo(chat_id=user_id, photo=photo, caption=f"🎨 {text}")
                 
-            os.remove(image_filename) # Clean up server
-            
-            # Show main menu again
+            os.remove(image_filename) 
+            await msg.delete() # Remove the "generating..." text
             await update.message.reply_text(get_text(user_id, 'main_menu'), reply_markup=main_menu_keyboard(user_id))
             
         except Exception as e:
-            await update.message.reply_text(f"{get_text(user_id, 'error')} {str(e)}")
+            await msg.edit_text(f"{get_text(user_id, 'error')} {str(e)}")
 
-    # If the user sends a link (Video Downloader)
+    # --- VIDEO DOWNLOADER ---
     elif "http://" in text or "https://" in text:
+        user_states[user_id] = None # Reset state
         context.user_data['last_link'] = text 
         keyboard = [
             [InlineKeyboardButton("🎬 Video (Best Quality)", callback_data='dl_mp4_best')],
@@ -132,7 +143,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]
         await update.message.reply_text(get_text(user_id, 'choose_format'), reply_markup=InlineKeyboardMarkup(keyboard))
         
-    # If they just type random text
+    # --- UNKNOWN MESSAGES ---
     else:
         await update.message.reply_text(get_text(user_id, 'main_menu'), reply_markup=main_menu_keyboard(user_id))
 
@@ -143,7 +154,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # --- Menu Navigation ---
     if query.data == 'show_main':
-        user_states[user_id] = None # Cancel any pending actions
+        user_states[user_id] = None 
         await query.edit_message_text(get_text(user_id, 'main_menu'), reply_markup=main_menu_keyboard(user_id))
         
     elif query.data == 'show_help':
@@ -157,9 +168,17 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]
         await query.edit_message_text(get_text(user_id, 'choose_lang'), reply_markup=InlineKeyboardMarkup(keyboard))
 
+    # --- Platform Link Requests ---
+    elif query.data == 'ask_yt':
+        await query.edit_message_text(get_text(user_id, 'ask_yt'), reply_markup=back_keyboard(user_id))
+    elif query.data == 'ask_ig':
+        await query.edit_message_text(get_text(user_id, 'ask_ig'), reply_markup=back_keyboard(user_id))
+    elif query.data == 'ask_tt':
+        await query.edit_message_text(get_text(user_id, 'ask_tt'), reply_markup=back_keyboard(user_id))
+
     # --- Start AI Image Process ---
     elif query.data == 'ask_image':
-        user_states[user_id] = 'waiting_for_image' # Tell the bot to expect a prompt next
+        user_states[user_id] = 'waiting_for_image' 
         await query.edit_message_text(get_text(user_id, 'ask_prompt'), reply_markup=back_keyboard(user_id))
 
     # --- Language Selection ---
@@ -168,7 +187,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         new_text = get_text(user_id, 'lang_set') + get_text(user_id, 'main_menu')
         await query.edit_message_text(new_text, reply_markup=main_menu_keyboard(user_id))
 
-    # --- Download Buttons ---
+    # --- Download Media ---
     elif query.data.startswith('dl_'):
         link = context.user_data.get('last_link')
         if not link: return
@@ -206,7 +225,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 raise Exception("Could not locate the downloaded file.")
         except Exception as e:
-            error_msg = f"{get_text(user_id, 'error')}\n{str(e)}"
+            error_msg = f"{get_text(user_id, 'error')} {str(e)}"
             await context.bot.send_message(chat_id=user_id, text=error_msg)
         finally:
             for f in glob.glob(f"{user_id}_media*"):
