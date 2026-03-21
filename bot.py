@@ -51,6 +51,7 @@ ADMIN_IDS   = {int(x) for x in os.environ.get("ADMIN_IDS", "").split(",") if x.s
 MAX_FILE_MB = 50
 RATE_LIMIT  = 15
 RATE_WINDOW = 30
+USERS_FILE  = "users.txt" # [FIX] Saves users to a file for persistent broadcasts
 
 # ══════════════════════════════════════════════════════════
 # 2.  KEEP-ALIVE
@@ -66,7 +67,7 @@ def keep_alive():
     Thread(target=lambda: _flask.run(host="0.0.0.0", port=port), daemon=True).start()
 
 # ══════════════════════════════════════════════════════════
-# 3.  IN-MEMORY STATE
+# 3.  IN-MEMORY STATE & PERSISTENT USERS
 # ══════════════════════════════════════════════════════════
 user_languages: dict[int, str]         = {}
 user_states:    dict[int, str | None]  = {}
@@ -74,16 +75,31 @@ _rate_buckets:  dict[int, list[float]] = defaultdict(list)
 
 def is_rate_limited(uid: int) -> bool:
     now = time.monotonic()
-    _rate_buckets[uid] = [ts for ts in _rate_buckets[uid] if now - ts < RATE_WINDOW]
+    _rate_buckets[uid] =[ts for ts in _rate_buckets[uid] if now - ts < RATE_WINDOW]
     if len(_rate_buckets[uid]) >= RATE_LIMIT:
         return True
     _rate_buckets[uid].append(now)
     return False
 
+def save_user(uid: int):
+    """[FIX] Saves user ID to a file so broadcast doesn't break on restart."""
+    users = set()
+    if os.path.exists(USERS_FILE):
+        with open(USERS_FILE, "r") as f:
+            users = {int(line.strip()) for line in f if line.strip().isdigit()}
+    if uid not in users:
+        with open(USERS_FILE, "a") as f:
+            f.write(f"{uid}\n")
+
+def get_all_users() -> set[int]:
+    if os.path.exists(USERS_FILE):
+        with open(USERS_FILE, "r") as f:
+            return {int(line.strip()) for line in f if line.strip().isdigit()}
+    return set()
+
 # ══════════════════════════════════════════════════════════
 # 4.  LINK VALIDATION
 # ══════════════════════════════════════════════════════════
-# state key → (allowed domain fragments, invalid-text key)
 PLATFORM_VALIDATORS: dict[str, tuple[list[str], str]] = {
     "waiting_for_yt": (["youtube.com", "youtu.be"],             "invalid_yt"),
     "waiting_for_ig": (["instagram.com"],                        "invalid_ig"),
@@ -117,23 +133,19 @@ TEXTS: dict[str, dict[str, str]] = {
         ),
         "choose_lang":     "🌐 Choose your language:",
         "lang_set":        "✅ Language set to English!\n\n",
-        # Platform prompts
         "ask_yt":          "🔴 *YouTube Downloader*\n\nPaste your YouTube link:",
         "ask_ig":          "📸 *Instagram Downloader*\n\nPaste your Instagram link:",
         "ask_tt":          "🎵 *TikTok Downloader*\n\nPaste your TikTok link:",
         "ask_fb":          "🔵 *Facebook Downloader*\n\nPaste your Facebook link:",
         "ask_tw":          "🐦 *Twitter/X Downloader*\n\nPaste your Twitter/X link:",
         "ask_sc":          "🎧 *SoundCloud Downloader*\n\nPaste your SoundCloud link:",
-        # Validation errors
         "invalid_yt":      "❌ That doesn't look like a YouTube link. Try again:",
         "invalid_ig":      "❌ That doesn't look like an Instagram link. Try again:",
         "invalid_tt":      "❌ That doesn't look like a TikTok link. Try again:",
         "invalid_fb":      "❌ That doesn't look like a Facebook link. Try again:",
         "invalid_tw":      "❌ That doesn't look like a Twitter/X link. Try again:",
         "invalid_sc":      "❌ That doesn't look like a SoundCloud link. Try again:",
-        # Format picker
         "choose_format":   "✅ Link saved! Choose format:",
-        # Tools
         "ask_image":       "🎨 *AI Image Maker*\n\nDescribe what you want drawn.",
         "ask_qr":          "🔳 *QR Generator*\n\nSend any text or link:",
         "ask_tts":         "🗣️ *Voice Maker*\n\nSend any text to read aloud:",
@@ -150,7 +162,6 @@ TEXTS: dict[str, dict[str, str]] = {
         "broadcast_usage": "Usage: /broadcast <message>",
         "broadcast_done":  "✅ Sent to {n} users.",
         "invalid_currency":"❌ Format not recognised. Try: `100 USD to EUR`",
-        # Buttons
         "btn_help":     "Help ℹ️",        "btn_lang":     "Language 🌐",
         "btn_image":    "AI Image 🎨",    "btn_qr":       "QR Code 🔳",
         "btn_tts":      "Voice 🗣️",       "btn_back":     "◀ Back",
@@ -371,27 +382,19 @@ def t(uid: int, key: str) -> str:
 # 6.  KEYBOARDS
 # ══════════════════════════════════════════════════════════
 def main_menu_keyboard(uid: int) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([
-        # Row 1 — top platforms
-        [
+    return InlineKeyboardMarkup([[
             InlineKeyboardButton("YouTube 🔴",    callback_data="ask_yt"),
             InlineKeyboardButton("Instagram 📸",  callback_data="ask_ig"),
             InlineKeyboardButton("TikTok 🎵",     callback_data="ask_tt"),
-        ],
-        # Row 2 — more platforms
-        [
+        ],[
             InlineKeyboardButton("Facebook 🔵",   callback_data="ask_fb"),
             InlineKeyboardButton("Twitter/X 🐦",  callback_data="ask_tw"),
             InlineKeyboardButton("SoundCloud 🎧", callback_data="ask_sc"),
-        ],
-        # Row 3 — creative tools
-        [
+        ],[
             InlineKeyboardButton(t(uid, "btn_image"), callback_data="ask_image"),
             InlineKeyboardButton(t(uid, "btn_qr"),    callback_data="ask_qr"),
             InlineKeyboardButton(t(uid, "btn_tts"),   callback_data="ask_tts"),
-        ],
-        # Row 4 — navigation
-        [
+        ],[
             InlineKeyboardButton(t(uid, "btn_tools"), callback_data="show_tools"),
             InlineKeyboardButton(t(uid, "btn_lang"),  callback_data="show_lang"),
             InlineKeyboardButton(t(uid, "btn_help"),  callback_data="show_help"),
@@ -399,42 +402,31 @@ def main_menu_keyboard(uid: int) -> InlineKeyboardMarkup:
     ])
 
 def download_format_keyboard(uid: int) -> InlineKeyboardMarkup:
-    """Video vs Audio choice shown after a valid platform link is pasted."""
-    return InlineKeyboardMarkup([
-        [
+    return InlineKeyboardMarkup([[
             InlineKeyboardButton("🎬 Video",       callback_data="dl_video"),
             InlineKeyboardButton("🎵 Audio (MP3)", callback_data="dl_audio"),
-        ],
-        [InlineKeyboardButton(t(uid, "btn_back"), callback_data="show_main")],
+        ],[InlineKeyboardButton(t(uid, "btn_back"), callback_data="show_main")],
     ])
 
 def tools_menu_keyboard(uid: int) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([
-        [
+    return InlineKeyboardMarkup([[
             InlineKeyboardButton(t(uid, "btn_shorten"),  callback_data="ask_shorten"),
             InlineKeyboardButton(t(uid, "btn_weather"),  callback_data="ask_weather"),
-        ],
-        [InlineKeyboardButton(t(uid, "btn_currency"), callback_data="ask_currency")],
-        [InlineKeyboardButton(t(uid, "btn_back"), callback_data="show_main")],
+        ],[InlineKeyboardButton(t(uid, "btn_currency"), callback_data="ask_currency")],[InlineKeyboardButton(t(uid, "btn_back"), callback_data="show_main")],
     ])
 
 def back_keyboard(uid: int) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton(t(uid, "btn_back"), callback_data="show_main")]
+    return InlineKeyboardMarkup([[InlineKeyboardButton(t(uid, "btn_back"), callback_data="show_main")]
     ])
 
 def lang_keyboard(uid: int) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([
-        [
+    return InlineKeyboardMarkup([[
             InlineKeyboardButton("English 🇬🇧",   callback_data="lang_en"),
             InlineKeyboardButton("Español 🇪🇸",   callback_data="lang_es"),
-        ],
-        [
+        ],[
             InlineKeyboardButton("Français 🇫🇷",  callback_data="lang_fr"),
             InlineKeyboardButton("Português 🇧🇷", callback_data="lang_pt"),
-        ],
-        [InlineKeyboardButton("العربية 🇸🇦",      callback_data="lang_ar")],
-        [InlineKeyboardButton(t(uid, "btn_back"), callback_data="show_main")],
+        ],[InlineKeyboardButton("العربية 🇸🇦",      callback_data="lang_ar")],[InlineKeyboardButton(t(uid, "btn_back"), callback_data="show_main")],
     ])
 
 # ══════════════════════════════════════════════════════════
@@ -447,7 +439,7 @@ def cleanup(pattern: str) -> None:
         except OSError as exc:
             logger.warning("Could not delete %s: %s", path, exc)
 
-_BARS = [
+_BARS =[
     "📥 `[█░░░░░░░░░]` 10%",
     "📥 `[███░░░░░░░]` 30%",
     "📥 `[█████░░░░░]` 50%",
@@ -470,7 +462,7 @@ async def _animate_progress(msg, stop: asyncio.Event) -> None:
 # ══════════════════════════════════════════════════════════
 # 8.  COBALT API ENGINE
 # ══════════════════════════════════════════════════════════
-_COBALT_INSTANCES = [
+_COBALT_INSTANCES =[
     "https://api.cobalt.tools",
     "https://cobalt.api.timelessnesses.me",
     "https://cobalt.perdy.io",
@@ -498,7 +490,7 @@ def _cobalt_request(url: str, audio_only: bool = False) -> dict:
     }
     last_error: Exception | None = None
     for base in _COBALT_INSTANCES:
-        for endpoint in ["/api/json", "/"]:
+        for endpoint in["/api/json", "/"]:
             try:
                 resp = requests.post(
                     base.rstrip("/") + endpoint,
@@ -534,8 +526,7 @@ def _download_stream(download_url: str, dest_path: str) -> None:
             if chunk:
                 written += len(chunk)
                 if written > MAX_FILE_MB * 1024 * 1024:
-                    fh.close()
-                    os.remove(dest_path)
+                    #[FIX] Let the context manager close the file, just raise error
                     raise ValueError("FILE_TOO_LARGE")
                 fh.write(chunk)
 
@@ -551,7 +542,7 @@ def _run_cobalt_download(url: str, audio_only: bool, prefix: str) -> tuple[str, 
         _download_stream(dl_url, path)
         return path, audio_only
     if status == "picker":
-        items = data.get("picker", [])
+        items = data.get("picker",[])
         if not items:
             raise RuntimeError("Cobalt picker returned no items.")
         dl_url = items[0].get("url")
@@ -602,66 +593,15 @@ def _convert_currency(query: str) -> str:
         return ""
     return f"💱 *{amount:g} {src}* = *{amount * rate:.4g} {dst}*"
 
-# ══════════════════════════════════════════════════════════
-# 10. DOWNLOAD ORCHESTRATOR
-# ══════════════════════════════════════════════════════════
-async def process_download(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE,
-    uid: int,
-    link: str,
-    audio_only: bool = False,
-) -> None:
-    prefix = f"{uid}_media"
-    cleanup(f"{prefix}*")
-
-    msg  = await update.message.reply_text(t(uid, "auto_detect"), parse_mode="Markdown")
-    stop = asyncio.Event()
-    anim = asyncio.create_task(_animate_progress(msg, stop))
-
-    try:
-        filepath, is_audio = await asyncio.to_thread(
-            _run_cobalt_download, link, audio_only, prefix
-        )
-        stop.set()
-        anim.cancel()
-        try:
-            await msg.edit_text(t(uid, "uploading"), parse_mode="Markdown")
-        except Exception:
-            pass
-        with open(filepath, "rb") as fh:
-            if is_audio:
-                await context.bot.send_audio(chat_id=uid, audio=fh)
-            else:
-                await context.bot.send_video(chat_id=uid, video=fh)
-        try:
-            await msg.delete()
-        except Exception:
-            pass
-    except ValueError as ve:
-        stop.set(); anim.cancel()
-        await msg.edit_text(
-            t(uid, "file_too_large") if str(ve) == "FILE_TOO_LARGE"
-            else f"{t(uid, 'error')} `{ve}`",
-            parse_mode="Markdown",
-        )
-    except Exception as exc:
-        stop.set(); anim.cancel()
-        logger.error("Download uid=%s url=%s: %s", uid, link, exc)
-        await msg.edit_text(f"{t(uid, 'error')}\n`{exc}`", parse_mode="Markdown")
-    finally:
-        cleanup(f"{prefix}*")
-        await update.message.reply_text(
-            t(uid, "main_menu"), reply_markup=main_menu_keyboard(uid), parse_mode="Markdown"
-        )
+# [FIX] The unused dead-code `process_download` function was entirely removed from here.
 
 # ══════════════════════════════════════════════════════════
-# 11. COMMANDS
+# 10. COMMANDS
 # ══════════════════════════════════════════════════════════
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     uid = update.effective_user.id
     user_states[uid] = None
-    context.application.bot_data.setdefault("all_users", set()).add(uid)
+    save_user(uid)  # [FIX] Save user persistently
     await update.message.reply_text(
         t(uid, "main_menu"), reply_markup=main_menu_keyboard(uid), parse_mode="Markdown"
     )
@@ -681,7 +621,7 @@ async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         await update.message.reply_text(t(uid, "broadcast_usage"))
         return
     text  = " ".join(context.args)
-    users = context.application.bot_data.get("all_users", set())
+    users = get_all_users() # [FIX] Load from persistent file
     sent  = 0
     for target in users:
         try:
@@ -692,24 +632,13 @@ async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     await update.message.reply_text(t(uid, "broadcast_done").format(n=sent))
 
 # ══════════════════════════════════════════════════════════
-# 12. MESSAGE HANDLER
+# 11. MESSAGE HANDLER
 # ══════════════════════════════════════════════════════════
-
-# Tool states that expect a text reply
-_TOOL_STATES = {
-    "waiting_for_image",
-    "waiting_for_qr",
-    "waiting_for_tts",
-    "waiting_for_shorten",
-    "waiting_for_weather",
-    "waiting_for_currency",
-}
-
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     uid   = update.effective_user.id
     text  = update.message.text.strip()
     state = user_states.get(uid)
-    context.application.bot_data.setdefault("all_users", set()).add(uid)
+    save_user(uid) # [FIX] Ensure user is persistently saved
 
     if is_rate_limited(uid):
         await update.message.reply_text(t(uid, "rate_limited"))
@@ -734,7 +663,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
 
     # ── Raw link pasted with no prior state ──────────────
-    if text.startswith(("http://", "https://")):
+    # [FIX] Added `state is None` so it doesn't intercept tools like Short URL
+    if state is None and text.startswith(("http://", "https://")):
         user_states[uid] = None
         context.user_data["pending_link"] = text
         await update.message.reply_text(
@@ -851,10 +781,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         )
 
 # ══════════════════════════════════════════════════════════
-# 13. BUTTON / CALLBACK HANDLER
+# 12. BUTTON / CALLBACK HANDLER
 # ══════════════════════════════════════════════════════════
-
-# Platform button → state that expects a link
 _PLATFORM_STATES: dict[str, str] = {
     "ask_yt": "waiting_for_yt",
     "ask_ig": "waiting_for_ig",
@@ -864,7 +792,6 @@ _PLATFORM_STATES: dict[str, str] = {
     "ask_sc": "waiting_for_sc",
 }
 
-# Tool button → state that expects free text
 _TOOL_STATES_MAP: dict[str, str] = {
     "ask_image":    "waiting_for_image",
     "ask_qr":       "waiting_for_qr",
@@ -939,7 +866,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             )
             return
         await query.edit_message_text(t(uid, "auto_detect"), parse_mode="Markdown")
-        # Kick off download as a new message so the progress bar can edit it
         await _start_download_from_button(query, context, uid, link, audio_only=False)
 
     # ── Format picker: Audio ──────────────────────────────
@@ -954,7 +880,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await query.edit_message_text(t(uid, "auto_detect"), parse_mode="Markdown")
         await _start_download_from_button(query, context, uid, link, audio_only=True)
 
-
 async def _start_download_from_button(
     query,
     context: ContextTypes.DEFAULT_TYPE,
@@ -962,11 +887,10 @@ async def _start_download_from_button(
     link: str,
     audio_only: bool,
 ) -> None:
-    """Run a Cobalt download triggered from an inline button."""
     prefix = f"{uid}_media"
     cleanup(f"{prefix}*")
 
-    msg  = query.message   # reuse the existing message as the progress display
+    msg  = query.message
     stop = asyncio.Event()
     anim = asyncio.create_task(_animate_progress(msg, stop))
 
@@ -1009,7 +933,7 @@ async def _start_download_from_button(
         )
 
 # ══════════════════════════════════════════════════════════
-# 14. ENTRY POINT
+# 13. ENTRY POINT
 # ══════════════════════════════════════════════════════════
 if __name__ == "__main__":
     keep_alive()
