@@ -51,7 +51,7 @@ ADMIN_IDS   = {int(x) for x in os.environ.get("ADMIN_IDS", "").split(",") if x.s
 MAX_FILE_MB = 50
 RATE_LIMIT  = 15
 RATE_WINDOW = 30
-USERS_FILE  = "users.txt" # [FIX] Saves users to a file for persistent broadcasts
+USERS_FILE  = "users.txt" # Saves users to a file for persistent broadcasts
 
 # ══════════════════════════════════════════════════════════
 # 2.  KEEP-ALIVE
@@ -82,7 +82,7 @@ def is_rate_limited(uid: int) -> bool:
     return False
 
 def save_user(uid: int):
-    """[FIX] Saves user ID to a file so broadcast doesn't break on restart."""
+    """Saves user ID to a file so broadcast doesn't break on restart."""
     users = set()
     if os.path.exists(USERS_FILE):
         with open(USERS_FILE, "r") as f:
@@ -460,15 +460,8 @@ async def _animate_progress(msg, stop: asyncio.Event) -> None:
         await asyncio.sleep(2.0)
 
 # ══════════════════════════════════════════════════════════
-# 8.  COBALT API ENGINE
+# 8.  COBALT API ENGINE (DYNAMIC & ROBUST)
 # ══════════════════════════════════════════════════════════
-_COBALT_INSTANCES =[
-    "https://api.cobalt.tools",
-    "https://cobalt.api.timelessnesses.me",
-    "https://cobalt.perdy.io",
-    "https://cobalt.seriouseight.xyz",
-]
-
 _COBALT_HEADERS = {
     "Accept":        "application/json",
     "Content-Type":  "application/json",
@@ -480,6 +473,34 @@ _STREAM_HEADERS = {
     "Referer":       "https://cobalt.tools/",
 }
 
+def get_cobalt_instances() -> list[str]:
+    """Dynamically fetch a list of healthy Cobalt instances, with solid fallbacks."""
+    bases =[
+        "https://api.cobalt.tools",
+        "https://co.wuk.sh",
+        "https://api.cobalt.bkc.icu",
+        "https://cobalt.tools.run",
+        "https://cobalt.meowing.de",
+        "https://cobalt.canine.tools"
+    ]
+    try:
+        # Fetch live community instances
+        r = requests.get("https://instances.cobalt.best/api/instances.json", timeout=10)
+        if r.status_code == 200:
+            for inst in r.json():
+                api = inst.get("api")
+                score = inst.get("score", 0)
+                is_online = inst.get("online", {}).get("api", False)
+                
+                # Only add instances that are online and have a high reliability score
+                if api and is_online and score >= 90:
+                    if api not in bases:
+                        bases.append(api)
+    except Exception as e:
+        logger.warning("Could not fetch dynamic instances: %s", e)
+    
+    return bases
+
 def _cobalt_request(url: str, audio_only: bool = False) -> dict:
     payload: dict = {
         "url":          url,
@@ -489,30 +510,46 @@ def _cobalt_request(url: str, audio_only: bool = False) -> dict:
         "downloadMode": "audio" if audio_only else "auto",
     }
     last_error: Exception | None = None
-    for base in _COBALT_INSTANCES:
-        for endpoint in["/api/json", "/"]:
+    instances = get_cobalt_instances()
+    
+    for base in instances:
+        for endpoint in ["/api/json", "/"]:
             try:
                 resp = requests.post(
                     base.rstrip("/") + endpoint,
                     json=payload,
                     headers=_COBALT_HEADERS,
-                    timeout=20,
+                    timeout=15,
                 )
-                if resp.status_code == 404:
+                
+                # Skip instances that are dead, incorrectly configured, or explicitly blocking us
+                if resp.status_code in (404, 405, 403, 401, 429):
                     continue
+                
                 resp.raise_for_status()
                 data = resp.json()
                 status = data.get("status", "")
+                
                 if status == "error":
-                    raise RuntimeError(
-                        data.get("error", {}).get("code", data.get("text", "Unknown Cobalt error"))
-                    )
-                logger.info("Cobalt OK via %s%s  status=%s", base, endpoint, status)
+                    err_data = data.get("error", {})
+                    if isinstance(err_data, dict):
+                        err_code = err_data.get("code", data.get("text", "Unknown Cobalt error"))
+                    else:
+                        err_code = str(err_data) or data.get("text", "Unknown Cobalt error")
+                    
+                    # If this instance requires an API key or is rate-limiting, skip it
+                    if "rate-limit" in err_code.lower() or "auth" in err_code.lower():
+                        continue
+                        
+                    raise RuntimeError(err_code)
+                
+                logger.info("Cobalt OK via %s%s status=%s", base, endpoint, status)
                 return data
             except (RuntimeError, requests.RequestException) as exc:
                 last_error = exc
-                logger.warning("Cobalt %s%s → %s", base, endpoint, exc)
-    raise RuntimeError(f"All Cobalt instances failed. Last: {last_error}")
+                logger.debug("Cobalt %s%s → %s", base, endpoint, exc)
+                
+    raise RuntimeError(f"All Cobalt instances failed. Last error: {last_error}")
 
 def _download_stream(download_url: str, dest_path: str) -> None:
     resp = requests.get(download_url, stream=True, headers=_STREAM_HEADERS, timeout=60)
@@ -526,7 +563,6 @@ def _download_stream(download_url: str, dest_path: str) -> None:
             if chunk:
                 written += len(chunk)
                 if written > MAX_FILE_MB * 1024 * 1024:
-                    #[FIX] Let the context manager close the file, just raise error
                     raise ValueError("FILE_TOO_LARGE")
                 fh.write(chunk)
 
@@ -593,15 +629,13 @@ def _convert_currency(query: str) -> str:
         return ""
     return f"💱 *{amount:g} {src}* = *{amount * rate:.4g} {dst}*"
 
-# [FIX] The unused dead-code `process_download` function was entirely removed from here.
-
 # ══════════════════════════════════════════════════════════
 # 10. COMMANDS
 # ══════════════════════════════════════════════════════════
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     uid = update.effective_user.id
     user_states[uid] = None
-    save_user(uid)  # [FIX] Save user persistently
+    save_user(uid)  # Saves user persistently
     await update.message.reply_text(
         t(uid, "main_menu"), reply_markup=main_menu_keyboard(uid), parse_mode="Markdown"
     )
@@ -621,7 +655,7 @@ async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         await update.message.reply_text(t(uid, "broadcast_usage"))
         return
     text  = " ".join(context.args)
-    users = get_all_users() # [FIX] Load from persistent file
+    users = get_all_users() # Load from persistent file
     sent  = 0
     for target in users:
         try:
@@ -638,7 +672,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     uid   = update.effective_user.id
     text  = update.message.text.strip()
     state = user_states.get(uid)
-    save_user(uid) # [FIX] Ensure user is persistently saved
+    save_user(uid) # Ensure user is persistently saved
 
     if is_rate_limited(uid):
         await update.message.reply_text(t(uid, "rate_limited"))
@@ -663,7 +697,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
 
     # ── Raw link pasted with no prior state ──────────────
-    # [FIX] Added `state is None` so it doesn't intercept tools like Short URL
     if state is None and text.startswith(("http://", "https://")):
         user_states[uid] = None
         context.user_data["pending_link"] = text
