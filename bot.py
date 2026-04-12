@@ -16,147 +16,133 @@ TOKEN = os.environ.get("BOT_TOKEN", "YOUR_TOKEN_HERE")
 
 _flask = Flask(__name__)
 @_flask.route("/")
-def _home(): return "Centurion Bot Online!"
+def _home(): return "Infinite Bot Online!"
 
 def run_keep_alive():
     _flask.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
 
 # ══════════════════════════════════════════════════════════
-# 2. THE 100-TOOL DIRECTORY (Logic Engines)
-# ══════════════════════════════════════════════════════════
-
-class ToolEngine:
-    @staticmethod
-    def get_media(url): # Tools 1-10: Social Media
-        try:
-            r = requests.post("https://api.cobalt.tools", json={"url": url}, headers={"Accept": "application/json", "Content-Type": "application/json"}, timeout=12)
-            return r.json().get("url")
-        except: return None
-
-    @staticmethod
-    def ai_chat(text): # Tools 11-20: AI Text
-        try:
-            r = requests.get(f"https://api.simsimi.vn/v2/simsimi?text={text}&lc=en")
-            return r.json().get("success")
-        except: return "AI is resting..."
-
-    @staticmethod
-    def get_crypto(coin): # Tools 21-30: Finance
-        try:
-            r = requests.get(f"https://api.coingecko.com/api/v3/simple/price?ids={coin.lower()}&vs_currencies=usd").json()
-            return f"💰 {coin.upper()}: ${r[coin.lower()]['usd']}"
-        except: return "Coin not found."
-
-    @staticmethod
-    def dictionary(word): # Tools 31-40: Education
-        try:
-            r = requests.get(f"https://api.dictionaryapi.dev/api/v2/entries/en/{word}").json()
-            return f"📖 {word}: {r[0]['meanings'][0]['definitions'][0]['definition']}"
-        except: return "Word not found."
-
-# ══════════════════════════════════════════════════════════
-# 3. DYNAMIC KEYBOARDS
+# 2. MENU HELPERS
 # ══════════════════════════════════════════════════════════
 
 def main_menu():
     keys = [
-        [InlineKeyboardButton("📹 Media (10)", callback_data="cat_media"), InlineKeyboardButton("🛠 Utility (15)", callback_data="cat_util")],
-        [InlineKeyboardButton("🧠 AI & Logic (10)", callback_data="cat_ai"), InlineKeyboardButton("📚 Knowledge (15)", callback_data="cat_know")],
-        [InlineKeyboardButton("💹 Finance (10)", callback_data="cat_fin"), InlineKeyboardButton("🎉 Fun (20)", callback_data="cat_fun")],
-        [InlineKeyboardButton("👨‍💻 Dev Tools (10)", callback_data="cat_dev"), InlineKeyboardButton("🌍 Travel (10)", callback_data="cat_trav")]
+        [InlineKeyboardButton("📹 Media & DL", callback_data="cat_media"), InlineKeyboardButton("🛠 Utility Tools", callback_data="cat_util")],
+        [InlineKeyboardButton("🧠 AI & Graphics", callback_data="cat_ai"), InlineKeyboardButton("📚 Knowledge", callback_data="cat_know")],
+        [InlineKeyboardButton("💹 Money & Crypto", callback_data="cat_fin"), InlineKeyboardButton("🎉 Fun & Games", callback_data="cat_fun")],
+        [InlineKeyboardButton("👨‍💻 Developer", callback_data="cat_dev"), InlineKeyboardButton("🌍 Search", callback_data="cat_search")]
     ]
     return InlineKeyboardMarkup(keys)
 
 def sub_menu(category):
     menus = {
-        "media": [["YT Downloader", "dl"], ["TikTok DL", "dl"], ["Insta DL", "dl"], ["FB Downloader", "dl"], ["YT Search", "yts"], ["Lyrics", "lyrics"]],
-        "util": [["Translate", "trans"], ["Shorten", "short"], ["QR Gen", "qr"], ["Password", "pass"], ["TTS", "tts"], ["Img to PDF", "pdf"]],
-        "ai": [["AI Chat", "chat"], ["AI Image", "ai"], ["Background Rem", "bg"], ["Upscale", "up"]],
-        "know": [["Wiki", "wiki"], ["Dictionary", "dict"], ["Weather", "weather"], ["Unit Conv", "unit"]],
-        "fin": [["Crypto", "crypto"], ["Stocks", "stock"], ["Currency", "curr"]],
-        "fun": [["Jokes", "joke"], ["Quotes", "quote"], ["ASCII", "ascii"], ["Horoscope", "horo"], ["Facts", "fact"]],
-        "dev": [["JSON Format", "json"], ["Base64", "b64"], ["Github Search", "git"]],
-        "trav": [["Timezone", "time"], ["Distance", "dist"], ["Map", "map"]]
+        "media": [["📹 Downloader (All)", "dl"], ["🎬 YT Search", "yts"], ["🎵 Get Lyrics", "lyrics"], ["🎧 Audio Conv", "tts"]],
+        "util": [["🌐 Translate", "trans"], ["🔗 Shorten Link", "short"], ["🔳 QR Code", "qr"], ["🔑 Password", "pass"], ["📄 Img to PDF", "pdf"]],
+        "ai": [["🤖 AI Chat", "chat"], ["🎨 AI Image", "ai"], ["🖼 BG Remover", "bg"], ["✨ Upscaler", "up"]],
+        "know": [["📖 Wikipedia", "wiki"], ["⛅ Weather", "weather"], ["💱 Currency", "curr"], ["📖 Dictionary", "dict"]],
+        "fin": [["💰 Crypto Price", "crypto"], ["📉 Stock Price", "stock"], ["🏦 Tax Calc", "tax"]],
+        "fun": [["🤣 Jokes", "joke"], ["💬 Quotes", "quote"], ["🔮 Horoscope", "horo"], ["🅰 ASCII Art", "ascii"], ["🎲 Dice", "dice"]],
+        "search": [["🔍 Google Search", "google"], ["🖼 Image Search", "imgsearch"], ["👤 User Info", "info"]]
     }
-    buttons = []
-    for item in menus.get(category, []):
-        buttons.append([InlineKeyboardButton(item[0], callback_data=f"set_{item[1]}")])
-    buttons.append([InlineKeyboardButton("◀ Back", callback_data="home")])
+    buttons = [[InlineKeyboardButton(item[0], callback_data=f"set_{item[1]}")] for item in menus.get(category, [])]
+    buttons.append([InlineKeyboardButton("◀ Back to Menu", callback_data="home")])
     return InlineKeyboardMarkup(buttons)
 
 # ══════════════════════════════════════════════════════════
-# 4. UNIVERSAL HANDLER
+# 3. HANDLERS
 # ══════════════════════════════════════════════════════════
 
-async def callback_handler(update, context):
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # CRITICAL: Reset state on /start
+    context.user_data["state"] = None
+    await update.message.reply_text(
+        "🔥 *Infinite Multi-Tool Bot*\nEverything you need in one place\.\n\nChoose a category:", 
+        reply_markup=main_menu(), parse_mode="MarkdownV2"
+    )
+
+async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     d = query.data
 
-    if d == "home": 
-        await query.edit_message_text("🔥 *Centurion Mega-Bot*\n100+ Tools at your service. Select Category:", reply_markup=main_menu(), parse_mode="Markdown")
+    if d == "home":
+        context.user_data["state"] = None
+        await query.edit_message_text("Choose a category:", reply_markup=main_menu())
     elif d.startswith("cat_"):
-        await query.edit_message_text(f"🛠 *{d[4:].upper()} TOOLS*", reply_markup=sub_menu(d[4:]), parse_mode="Markdown")
+        await query.edit_message_text(f"🛠 *{d[4:].upper()} CATEGORY*", reply_markup=sub_menu(d[4:]), parse_mode="Markdown")
     elif d.startswith("set_"):
         state = d.replace("set_", "")
         context.user_data["state"] = state
-        await query.message.reply_text(f"📥 Send me the input for *{state.upper()}*:")
+        
+        # Immediate tools that don't need text input
+        if state == "dice":
+            await query.message.reply_dice()
+            context.user_data["state"] = None
+        elif state == "joke":
+            r = requests.get("https://official-joke-api.appspot.com/random_joke").json()
+            await query.message.reply_text(f"🤣 {r['setup']}\n\n✨ {r['punchline']}")
+            context.user_data["state"] = None
+        else:
+            await query.message.reply_text(f"📥 Send me the input for *{state.upper()}*:\n(Or type /start to cancel)")
 
-async def message_handler(update, context):
+async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     state = context.user_data.get("state")
     text = update.message.text
     if not state: return
 
+    m = await update.message.reply_text("Processing... ⏳")
+    
     try:
-        if state == "dl": # Media Tools
-            res = await asyncio.to_thread(ToolEngine.get_media, text)
-            if res: await update.message.reply_video(res)
-            else: await update.message.reply_text("❌ Download Error.")
+        if state == "dl":
+            r = requests.post("https://api.cobalt.tools", json={"url": text}, 
+                             headers={"Accept": "application/json", "Content-Type": "application/json"}, timeout=15)
+            url = r.json().get("url")
+            if url: await update.message.reply_video(url)
+            else: await m.edit_text("❌ Failed to fetch video.")
         
-        elif state == "ai": # AI Image
+        elif state == "ai":
             await update.message.reply_photo(f"https://image.pollinations.ai/prompt/{urllib.parse.quote(text)}?nologo=true")
-        
-        elif state == "wiki": # Knowledge
+            await m.delete()
+
+        elif state == "wiki":
             wiki = wikipediaapi.Wikipedia('CenturionBot/1.0', 'en')
-            await update.message.reply_text(wiki.page(text).summary[:1000] if wiki.page(text).exists() else "No info.")
-            
-        elif state == "ascii": # Design
-            f = pyfiglet.Figlet(font='slant')
-            await update.message.reply_text(f"```\n{f.renderText(text)}\n```", parse_mode="MarkdownV2")
+            p = wiki.page(text)
+            await update.message.reply_text(p.summary[:1000] if p.exists() else "❌ No result.")
+            await m.delete()
 
-        elif state == "crypto": # Finance
-            await update.message.reply_text(ToolEngine.get_crypto(text))
-
-        elif state == "dict": # Education
-            await update.message.reply_text(ToolEngine.dictionary(text))
-            
-        elif state == "weather": # Geo
+        elif state == "weather":
             r = requests.get(f"https://wttr.in/{text}?format=4")
             await update.message.reply_text(r.text)
+            await m.delete()
 
-        elif state == "trans": # Utility
+        elif state == "ascii":
+            f = pyfiglet.Figlet(font='slant')
+            await update.message.reply_text(f"`{f.renderText(text)}`", parse_mode="MarkdownV2")
+            await m.delete()
+
+        elif state == "trans":
             res = GoogleTranslator(source='auto', target='en').translate(text)
-            await update.message.reply_text(f"🌐 {res}")
-
-        elif state == "qr": # Utility
-            await update.message.reply_photo(f"https://api.qrserver.com/v1/create-qr-code/?data={urllib.parse.quote(text)}")
+            await update.message.reply_text(f"🌐 Translated to English:\n`{res}`", parse_mode="Markdown")
+            await m.delete()
 
     except Exception as e:
-        await update.message.reply_text(f"❌ Error Processing: {str(e)}")
+        await m.edit_text(f"❌ Error: {str(e)}")
+    
+    # Optional: Clear state after success
+    # context.user_data["state"] = None
 
 # ══════════════════════════════════════════════════════════
-# 5. START & RUN
+# 4. RUN
 # ══════════════════════════════════════════════════════════
-
-async def start(update, context):
-    await update.message.reply_text("👑 *Centurion Multi-Tool Bot*\n100+ Tools for Downloads, AI, Finance, and more\.", 
-                                  reply_markup=main_menu(), parse_mode="MarkdownV2")
 
 if __name__ == "__main__":
     Thread(target=run_keep_alive, daemon=True).start()
     app = Application.builder().token(TOKEN).build()
+    
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("cancel", start))
     app.add_handler(CallbackQueryHandler(callback_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
-    print("Mega Bot Running...")
+    
+    print("Infinite Bot Started!")
     app.run_polling(drop_pending_updates=True)
