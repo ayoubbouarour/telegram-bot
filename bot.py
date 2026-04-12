@@ -15,6 +15,7 @@ from flask import Flask
 from gtts import gTTS
 from deep_translator import GoogleTranslator
 import wikipediaapi
+from youtubesearchpython import VideosSearch
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
@@ -26,244 +27,179 @@ from telegram.ext import (
 )
 
 # ══════════════════════════════════════════════════════════
-# 1. CONFIG & LOGGING
+# 1. SETUP & DB
 # ══════════════════════════════════════════════════════════
-logging.basicConfig(format="%(asctime)s | %(levelname)s | %(message)s", level=logging.INFO)
-logger = logging.getLogger(__name__)
-
+logging.basicConfig(format="%(asctime)s | %(message)s", level=logging.INFO)
 TOKEN = os.environ.get("BOT_TOKEN", "YOUR_TOKEN_HERE")
 DB_FILE = "bot_database.json"
-
 db = {"users": {}}
 
-def load_db():
-    global db
-    if os.path.exists(DB_FILE):
-        try:
-            with open(DB_FILE, "r") as f:
-                db = json.load(f)
-        except: pass
-
 def save_db():
-    with open(DB_FILE, "w") as f:
-        json.dump(db, f)
+    with open(DB_FILE, "w") as f: json.dump(db, f)
 
 # ══════════════════════════════════════════════════════════
-# 2. RENDER KEEP-ALIVE (Critical for Render.com)
+# 2. RENDER KEEP-ALIVE
 # ══════════════════════════════════════════════════════════
 _flask = Flask(__name__)
 @_flask.route("/")
-def _home(): return "Bot is Online and Functional!"
+def _home(): return "Mega Bot is Online!"
 
 def run_keep_alive():
-    port = int(os.environ.get("PORT", 8080))
-    _flask.run(host="0.0.0.0", port=port)
+    _flask.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
 
 # ══════════════════════════════════════════════════════════
-# 3. TOOL LOGIC FUNCTIONS
+# 3. TOOL LOGIC
 # ══════════════════════════════════════════════════════════
 
-# TOOL 1: Media Downloader (Cobalt)
 def get_media(url):
-    instances = ["https://api.cobalt.tools", "https://cobalt.canine.tools", "https://api.cobalt.bkc.icu"]
-    for base in instances:
-        try:
-            r = requests.post(base, json={"url": url, "videoQuality": "720"}, 
-                             headers={"Accept": "application/json", "Content-Type": "application/json"}, timeout=10)
-            if r.status_code == 200: return r.json().get("url")
-        except: continue
-    return None
-
-# TOOL 2: Wikipedia Search
-def search_wiki(query):
-    wiki = wikipediaapi.Wikipedia('SuperBot/1.0 (contact@example.com)', 'en')
-    page = wiki.page(query)
-    return f"📚 *{page.title}*\n\n{page.summary[:600]}..." if page.exists() else "❌ Not found."
-
-# TOOL 3: Weather
-def get_weather(city):
     try:
-        r = requests.get(f"https://wttr.in/{city}?format=%C+%t+%w", timeout=5)
-        return f"⛅ Weather in {city.capitalize()}: {r.text}"
-    except: return "❌ Weather service unavailable."
+        r = requests.post("https://api.cobalt.tools", json={"url": url}, headers={"Accept": "application/json", "Content-Type": "application/json"}, timeout=10)
+        return r.json().get("url")
+    except: return None
 
-# TOOL 4: Currency Converter
-def convert_curr(amount, fr, to):
-    try:
-        r = requests.get(f"https://open.er-api.com/v6/latest/{fr.upper()}")
-        rate = r.json()["rates"][to.upper()]
-        return f"💱 {amount} {fr.upper()} = {round(amount * rate, 2)} {to.upper()}"
-    except: return "❌ Invalid currency codes."
+def search_yt(query):
+    search = VideosSearch(query, limit=3)
+    results = search.result()['result']
+    return "\n\n".join([f"🎬 {v['title']}\n🔗 {v['link']}" for v in results])
+
+def get_joke():
+    r = requests.get("https://official-joke-api.appspot.com/random_joke").json()
+    return f"🤣 {r['setup']}\n\n✨ {r['punchline']}"
+
+def get_quote():
+    r = requests.get("https://zenquotes.io/api/random").json()
+    return f"💬 \"{r[0]['q']}\"\n— {r[0]['a']}"
 
 # ══════════════════════════════════════════════════════════
-# 4. KEYBOARDS
+# 4. KEYBOARDS (Categorized)
 # ══════════════════════════════════════════════════════════
+
 def main_menu():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("📥 Downloader", callback_data="set_dl"), InlineKeyboardButton("🎨 AI Image", callback_data="set_ai")],
-        [InlineKeyboardButton("📖 Wikipedia", callback_data="set_wiki"), InlineKeyboardButton("🌐 Translate", callback_data="set_trans")],
-        [InlineKeyboardButton("⛅ Weather", callback_data="set_weather"), InlineKeyboardButton("💱 Currency", callback_data="set_curr")],
-        [InlineKeyboardButton("🗣️ Text-to-Speech", callback_data="set_tts"), InlineKeyboardButton("🔗 Shorten URL", callback_data="set_short")],
-        [InlineKeyboardButton("📄 Img to PDF", callback_data="set_pdf"), InlineKeyboardButton("🔑 Password", callback_data="set_pass")]
+        [InlineKeyboardButton("📥 Media", callback_data="cat_media"), InlineKeyboardButton("🛠 Utility", callback_data="cat_util")],
+        [InlineKeyboardButton("📚 Knowledge", callback_data="cat_know"), InlineKeyboardButton("🎉 Fun", callback_data="cat_fun")],
+        [InlineKeyboardButton("👤 My Info", callback_data="tool_info")]
     ])
 
-def back_btn():
-    return InlineKeyboardMarkup([[InlineKeyboardButton("◀ Back to Menu", callback_data="home")]])
+def cat_media():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📹 Downloader", callback_data="set_dl"), InlineKeyboardButton("🔍 YT Search", callback_data="set_yts")],
+        [InlineKeyboardButton("◀ Back", callback_data="home")]
+    ])
+
+def cat_util():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🌐 Translate", callback_data="set_trans"), InlineKeyboardButton("🗣 TTS", callback_data="set_tts")],
+        [InlineKeyboardButton("🔗 Shorten", callback_data="set_short"), InlineKeyboardButton("🔑 Password", callback_data="set_pass")],
+        [InlineKeyboardButton("🔳 QR Code", callback_data="set_qr"), InlineKeyboardButton("📄 Img to PDF", callback_data="set_pdf")],
+        [InlineKeyboardButton("◀ Back", callback_data="home")]
+    ])
+
+def cat_know():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📖 Wikipedia", callback_data="set_wiki"), InlineKeyboardButton("⛅ Weather", callback_data="set_weather")],
+        [InlineKeyboardButton("💱 Currency", callback_data="set_curr"), InlineKeyboardButton("⚖ Units", callback_data="set_unit")],
+        [InlineKeyboardButton("◀ Back", callback_data="home")]
+    ])
+
+def cat_fun():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🎨 AI Image", callback_data="set_ai"), InlineKeyboardButton("🤣 Joke", callback_data="tool_joke")],
+        [InlineKeyboardButton("💬 Quote", callback_data="tool_quote"), InlineKeyboardButton("🔮 Horoscope", callback_data="set_horo")],
+        [InlineKeyboardButton("🅰 ASCII Art", callback_data="set_ascii")],
+        [InlineKeyboardButton("◀ Back", callback_data="home")]
+    ])
 
 # ══════════════════════════════════════════════════════════
 # 5. HANDLERS
 # ══════════════════════════════════════════════════════════
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    uid = str(update.effective_user.id)
-    if uid not in db["users"]:
-        db["users"][uid] = {"joined": time.time()}
-        save_db()
-    await update.message.reply_text("🚀 *Super Bot v3 - 10 Tools Loaded*\nChoose a tool below:", 
+async def start(update, context):
+    await update.message.reply_text("🔥 *Mega Bot v4* - 20 Tools Ready\nSelect a category:", 
                                   reply_markup=main_menu(), parse_mode="Markdown")
 
-async def handle_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def callback_handler(update, context):
     query = update.callback_query
     await query.answer()
-    data = query.data
+    d = query.data
 
-    if data == "home":
-        context.user_data["state"] = None
-        await query.edit_message_text("Choose a tool below:", reply_markup=main_menu())
+    if d == "home": await query.edit_message_text("Select a category:", reply_markup=main_menu())
+    elif d == "cat_media": await query.edit_message_text("📥 *Media Tools*", reply_markup=cat_media(), parse_mode="Markdown")
+    elif d == "cat_util": await query.edit_message_text("🛠 *Utility Tools*", reply_markup=cat_util(), parse_mode="Markdown")
+    elif d == "cat_know": await query.edit_message_text("📚 *Knowledge Tools*", reply_markup=cat_know(), parse_mode="Markdown")
+    elif d == "cat_fun": await query.edit_message_text("🎉 *Fun Tools*", reply_markup=cat_fun(), parse_mode="Markdown")
+
+    # Simple Direct Tools
+    elif d == "tool_joke": await query.message.reply_text(get_joke())
+    elif d == "tool_quote": await query.message.reply_text(get_quote())
+    elif d == "tool_info": 
+        await query.message.reply_text(f"👤 *Your Info*\nName: {query.from_user.first_name}\nID: `{query.from_user.id}`", parse_mode="Markdown")
     
-    elif data == "set_dl": 
-        context.user_data["state"] = "dl"
-        await query.edit_message_text("📥 *Downloader*\nPaste any link (YouTube, TikTok, IG, FB):", parse_mode="Markdown", reply_markup=back_btn())
-    
-    elif data == "set_ai":
-        context.user_data["state"] = "ai"
-        await query.edit_message_text("🎨 *AI Image Generator*\nDescribe the image you want to create:", parse_mode="Markdown", reply_markup=back_btn())
+    # State-based Tools
+    elif d.startswith("set_"):
+        context.user_data["state"] = d.replace("set_", "")
+        prompts = {
+            "dl": "Paste link to download:", "yts": "What video to search?", "ai": "Describe image:",
+            "wiki": "Search Wiki:", "trans": "Text to translate:", "weather": "City name:",
+            "curr": "Format: 100 USD to EUR", "unit": "Format: 10 km to miles", "tts": "Text to speak:",
+            "short": "Link to shorten:", "qr": "Text for QR:", "horo": "Your sign (Aries, etc):",
+            "ascii": "Text for ASCII art:", "pdf": "Send photos, then /done"
+        }
+        await query.message.reply_text(f"👉 {prompts.get(context.user_data['state'], 'Send input:')}")
 
-    elif data == "set_wiki":
-        context.user_data["state"] = "wiki"
-        await query.edit_message_text("📖 *Wikipedia*\nWhat do you want to search for?", parse_mode="Markdown", reply_markup=back_btn())
-
-    elif data == "set_trans":
-        context.user_data["state"] = "trans"
-        await query.edit_message_text("🌐 *Translator*\nSend text to translate to English:", parse_mode="Markdown", reply_markup=back_btn())
-
-    elif data == "set_weather":
-        context.user_data["state"] = "weather"
-        await query.edit_message_text("⛅ *Weather*\nSend a city name (e.g., London):", parse_mode="Markdown", reply_markup=back_btn())
-
-    elif data == "set_curr":
-        context.user_data["state"] = "curr"
-        await query.edit_message_text("💱 *Currency*\nFormat: `100 USD to EUR`", parse_mode="Markdown", reply_markup=back_btn())
-
-    elif data == "set_tts":
-        context.user_data["state"] = "tts"
-        await query.edit_message_text("🗣️ *Text to Speech*\nSend text to convert to voice:", parse_mode="Markdown", reply_markup=back_btn())
-
-    elif data == "set_short":
-        context.user_data["state"] = "short"
-        await query.edit_message_text("🔗 *URL Shortener*\nPaste your long link:", parse_mode="Markdown", reply_markup=back_btn())
-
-    elif data == "set_pdf":
-        context.user_data["state"] = "pdf"
-        context.user_data["pdf_files"] = []
-        await query.edit_message_text("📄 *Image to PDF*\nSend images one by one. When finished, type /done", parse_mode="Markdown", reply_markup=back_btn())
-
-    elif data == "set_pass":
-        pw = "".join(secrets.choice(string.ascii_letters + string.digits + "@#") for _ in range(16))
-        await query.message.reply_text(f"🔑 *Secure Password:* `{pw}`", parse_mode="Markdown", reply_markup=back_btn())
-
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def message_handler(update, context):
     state = context.user_data.get("state")
     text = update.message.text
-    uid = update.effective_user.id
-
     if not state: return
 
-    # TOOL 1: Downloader logic
-    if state == "dl":
-        m = await update.message.reply_text("Downloading... ⏳")
-        file_url = await asyncio.to_thread(get_media, text)
-        if file_url:
-            await update.message.reply_video(file_url)
-            await m.delete()
-        else: await m.edit_text("❌ Failed. Ensure the link is public.")
-
-    # TOOL 2: AI Image
-    elif state == "ai":
-        m = await update.message.reply_text("Generating... 🎨")
-        prompt = urllib.parse.quote(text)
-        img_url = f"https://image.pollinations.ai/prompt/{prompt}?width=1024&height=1024&nologo=true"
-        await update.message.reply_photo(img_url, caption=f"🎨: {text}")
-        await m.delete()
-
-    # TOOL 3: Wikipedia
-    elif state == "wiki":
-        res = await asyncio.to_thread(search_wiki, text)
-        await update.message.reply_text(res, parse_mode="Markdown")
-
-    # TOOL 4: Weather
-    elif state == "weather":
-        res = await asyncio.to_thread(get_weather, text)
-        await update.message.reply_text(res)
-
-    # TOOL 5: Translator
-    elif state == "trans":
-        res = GoogleTranslator(source='auto', target='en').translate(text)
-        await update.message.reply_text(f"🌐 *Translated:* \n`{res}`", parse_mode="Markdown")
-
-    # TOOL 6: Currency
-    elif state == "curr":
-        try:
-            parts = text.split()
-            res = convert_curr(float(parts[0]), parts[1], parts[4])
+    try:
+        if state == "dl":
+            url = await asyncio.to_thread(get_media, text)
+            if url: await update.message.reply_video(url)
+            else: await update.message.reply_text("❌ Failed.")
+        
+        elif state == "yts":
+            res = await asyncio.to_thread(search_yt, text)
             await update.message.reply_text(res)
-        except: await update.message.reply_text("❌ Format: `100 USD to EUR`")
 
-    # TOOL 7: TTS
-    elif state == "tts":
-        tts = gTTS(text=text, lang='en')
-        tts.save(f"{uid}.mp3")
-        await update.message.reply_voice(open(f"{uid}.mp3", "rb"))
-        os.remove(f"{uid}.mp3")
+        elif state == "ai":
+            await update.message.reply_photo(f"https://image.pollinations.ai/prompt/{urllib.parse.quote(text)}?nologo=true")
 
-    # TOOL 8: Shortener
-    elif state == "short":
-        r = requests.get(f"http://tinyurl.com/api-create.php?url={text}")
-        await update.message.reply_text(f"🔗 *Shortened:* {r.text}", parse_mode="Markdown")
+        elif state == "qr":
+            await update.message.reply_photo(f"https://api.qrserver.com/v1/create-qr-code/?data={urllib.parse.quote(text)}")
 
-async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if context.user_data.get("state") == "pdf":
-        file = await update.message.photo[-1].get_file()
-        path = f"img_{update.effective_user.id}_{len(context.user_data['pdf_files'])}.jpg"
-        await file.download_to_drive(path)
-        context.user_data["pdf_files"].append(path)
-        await update.message.reply_text(f"📸 Image {len(context.user_data['pdf_files'])} added. Send more or type /done")
+        elif state == "wiki":
+            wiki = wikipediaapi.Wikipedia('MegaBot/1.0', 'en')
+            p = wiki.page(text)
+            await update.message.reply_text(p.summary[:500] if p.exists() else "❌ No info.")
 
-async def done_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    files = context.user_data.get("pdf_files", [])
-    if not files: return
-    out = f"Result_{update.effective_user.id}.pdf"
-    with open(out, "wb") as f:
-        f.write(img2pdf.convert(files))
-    await update.message.reply_document(open(out, "rb"))
-    for f in files: os.remove(f)
-    os.remove(out)
-    context.user_data["state"] = None
+        elif state == "weather":
+            r = requests.get(f"https://wttr.in/{text}?format=3")
+            await update.message.reply_text(r.text)
+
+        elif state == "ascii":
+            r = requests.get(f"http://artii.herokuapp.com/make?text={urllib.parse.quote(text)}")
+            await update.message.reply_text(f"`{r.text}`", parse_mode="Markdown")
+
+        elif state == "tts":
+            gTTS(text=text, lang='en').save("s.mp3")
+            await update.message.reply_voice(open("s.mp3", "rb"))
+            os.remove("s.mp3")
+
+        elif state == "trans":
+            res = GoogleTranslator(source='auto', target='en').translate(text)
+            await update.message.reply_text(f"🌐 {res}")
+
+    except Exception as e:
+        await update.message.reply_text(f"❌ Error: {str(e)}")
 
 # ══════════════════════════════════════════════════════════
-# 6. RUN BOT
+# 6. RUN
 # ══════════════════════════════════════════════════════════
 if __name__ == "__main__":
-    load_db()
     Thread(target=run_keep_alive, daemon=True).start()
-    
     app = Application.builder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("done", done_pdf))
-    app.add_handler(CallbackQueryHandler(handle_callbacks))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
-
-    print("Bot is active!")
-    # drop_pending_updates=True prevents the Conflict error
+    app.add_handler(CallbackQueryHandler(callback_handler))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
     app.run_polling(drop_pending_updates=True)
