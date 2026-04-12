@@ -39,7 +39,7 @@ def main_menu():
         [InlineKeyboardButton("💬 Daily Quote", callback_data="do_quote"), InlineKeyboardButton("🎲 Dice Roll", callback_data="do_dice")],
         [InlineKeyboardButton("📱 My Device Info", callback_data="do_info"), InlineKeyboardButton("🧪 System Ping", callback_data="do_ping")],
         [InlineKeyboardButton("🔗 URL Shortener", callback_data="set_short"), InlineKeyboardButton("📉 Crypto Price", callback_data="set_crypto")],
-        [InlineKeyboardButton("👨‍💻 Developer", url="https://t.me/your_username")]
+        [InlineKeyboardButton("👨‍💻 Developer", url="https://t.me/brick_kick")]
     ]
     return InlineKeyboardMarkup(keyboard)
 
