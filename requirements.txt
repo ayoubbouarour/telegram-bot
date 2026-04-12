@@ -1,4 +1,8 @@
 python-telegram-bot
-flask
 requests
+flask
 gTTS
+deep-translator
+img2pdf
+pillow
+wikipedia-api
