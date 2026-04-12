@@ -1,19 +1,16 @@
 import os
 import re
 import json
-import glob
 import time
 import asyncio
 import logging
-import urllib.parse
 import secrets
 import string
+import urllib.parse
 from threading import Thread
-from collections import defaultdict
 
 import requests
 import img2pdf
-from PIL import Image
 from flask import Flask
 from gtts import gTTS
 from deep_translator import GoogleTranslator
@@ -35,9 +32,7 @@ logging.basicConfig(format="%(asctime)s | %(levelname)s | %(message)s", level=lo
 logger = logging.getLogger(__name__)
 
 TOKEN = os.environ.get("BOT_TOKEN", "YOUR_TOKEN_HERE")
-ADMIN_IDS = {int(x) for x in os.environ.get("ADMIN_IDS", "").split(",") if x.strip()}
 DB_FILE = "bot_database.json"
-MAX_FILE_MB = 50
 
 db = {"users": {}}
 
@@ -53,144 +48,201 @@ def save_db():
     with open(DB_FILE, "w") as f:
         json.dump(db, f)
 
-def register_user(uid: int):
-    uid_str = str(uid)
-    if uid_str not in db["users"]:
-        db["users"][uid_str] = {"lang": "en", "joined": time.time()}
-        save_db()
-
 # ══════════════════════════════════════════════════════════
-# 2. RENDER KEEP-ALIVE (Fixes "Port" errors)
+# 2. RENDER KEEP-ALIVE (Critical for Render.com)
 # ══════════════════════════════════════════════════════════
 _flask = Flask(__name__)
 @_flask.route("/")
-def _home(): return "Bot is Alive!"
+def _home(): return "Bot is Online and Functional!"
 
 def run_keep_alive():
     port = int(os.environ.get("PORT", 8080))
     _flask.run(host="0.0.0.0", port=port)
 
 # ══════════════════════════════════════════════════════════
-# 3. COBALT DOWNLOADER ENGINE
+# 3. TOOL LOGIC FUNCTIONS
 # ══════════════════════════════════════════════════════════
-def get_cobalt_url(url: str, audio_only: bool = False):
-    instances = ["https://api.cobalt.tools", "https://co.wuk.sh"]
-    payload = {
-        "url": url,
-        "videoQuality": "720",
-        "audioFormat": "mp3",
-        "downloadMode": "audio" if audio_only else "auto"
-    }
-    headers = {"Accept": "application/json", "Content-Type": "application/json"}
-    
+
+# TOOL 1: Media Downloader (Cobalt)
+def get_media(url):
+    instances = ["https://api.cobalt.tools", "https://cobalt.canine.tools", "https://api.cobalt.bkc.icu"]
     for base in instances:
         try:
-            r = requests.post(base, json=payload, headers=headers, timeout=15)
-            if r.status_code == 200:
-                return r.json().get("url")
+            r = requests.post(base, json={"url": url, "videoQuality": "720"}, 
+                             headers={"Accept": "application/json", "Content-Type": "application/json"}, timeout=10)
+            if r.status_code == 200: return r.json().get("url")
         except: continue
     return None
+
+# TOOL 2: Wikipedia Search
+def search_wiki(query):
+    wiki = wikipediaapi.Wikipedia('SuperBot/1.0 (contact@example.com)', 'en')
+    page = wiki.page(query)
+    return f"📚 *{page.title}*\n\n{page.summary[:600]}..." if page.exists() else "❌ Not found."
+
+# TOOL 3: Weather
+def get_weather(city):
+    try:
+        r = requests.get(f"https://wttr.in/{city}?format=%C+%t+%w", timeout=5)
+        return f"⛅ Weather in {city.capitalize()}: {r.text}"
+    except: return "❌ Weather service unavailable."
+
+# TOOL 4: Currency Converter
+def convert_curr(amount, fr, to):
+    try:
+        r = requests.get(f"https://open.er-api.com/v6/latest/{fr.upper()}")
+        rate = r.json()["rates"][to.upper()]
+        return f"💱 {amount} {fr.upper()} = {round(amount * rate, 2)} {to.upper()}"
+    except: return "❌ Invalid currency codes."
 
 # ══════════════════════════════════════════════════════════
 # 4. KEYBOARDS
 # ══════════════════════════════════════════════════════════
-def main_menu(uid):
+def main_menu():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("Media Downloader 📥", callback_data="cat_media")],
-        [InlineKeyboardButton("Utility Tools 🛠", callback_data="cat_tools")],
-        [InlineKeyboardButton("AI & Magic ✨", callback_data="cat_ai")]
+        [InlineKeyboardButton("📥 Downloader", callback_data="set_dl"), InlineKeyboardButton("🎨 AI Image", callback_data="set_ai")],
+        [InlineKeyboardButton("📖 Wikipedia", callback_data="set_wiki"), InlineKeyboardButton("🌐 Translate", callback_data="set_trans")],
+        [InlineKeyboardButton("⛅ Weather", callback_data="set_weather"), InlineKeyboardButton("💱 Currency", callback_data="set_curr")],
+        [InlineKeyboardButton("🗣️ Text-to-Speech", callback_data="set_tts"), InlineKeyboardButton("🔗 Shorten URL", callback_data="set_short")],
+        [InlineKeyboardButton("📄 Img to PDF", callback_data="set_pdf"), InlineKeyboardButton("🔑 Password", callback_data="set_pass")]
     ])
 
-def media_menu():
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("YouTube 🔴", callback_data="ask_dl"), InlineKeyboardButton("Instagram 📸", callback_data="ask_dl")],
-        [InlineKeyboardButton("TikTok 🎵", callback_data="ask_dl"), InlineKeyboardButton("Twitter/X 🐦", callback_data="ask_dl")],
-        [InlineKeyboardButton("◀ Back", callback_data="show_main")]
-    ])
-
-def tools_menu():
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("Wikipedia 📖", callback_data="ask_wiki"), InlineKeyboardButton("Translate 🌐", callback_data="ask_trans")],
-        [InlineKeyboardButton("Password 🔑", callback_data="ask_pass"), InlineKeyboardButton("Img to PDF 📄", callback_data="ask_pdf")],
-        [InlineKeyboardButton("Extract Text 👁", callback_data="ask_ocr"), InlineKeyboardButton("Weather ⛅", callback_data="ask_weather")],
-        [InlineKeyboardButton("◀ Back", callback_data="show_main")]
-    ])
+def back_btn():
+    return InlineKeyboardMarkup([[InlineKeyboardButton("◀ Back to Menu", callback_data="home")]])
 
 # ══════════════════════════════════════════════════════════
 # 5. HANDLERS
 # ══════════════════════════════════════════════════════════
-async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    uid = update.effective_user.id
-    register_user(uid)
-    await update.message.reply_text("🤖 *Super Bot v2*\nSelect a category:", reply_markup=main_menu(uid), parse_mode="Markdown")
 
-async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = str(update.effective_user.id)
+    if uid not in db["users"]:
+        db["users"][uid] = {"joined": time.time()}
+        save_db()
+    await update.message.reply_text("🚀 *Super Bot v3 - 10 Tools Loaded*\nChoose a tool below:", 
+                                  reply_markup=main_menu(), parse_mode="Markdown")
+
+async def handle_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    uid = query.from_user.id
-    data = query.data
     await query.answer()
+    data = query.data
 
-    if data == "show_main":
-        await query.edit_message_text("Select category:", reply_markup=main_menu(uid))
-    elif data == "cat_media":
-        await query.edit_message_text("📥 *Media Downloader*\nSelect platform or paste link:", reply_markup=media_menu(), parse_mode="Markdown")
-    elif data == "cat_tools":
-        await query.edit_message_text("🛠 *Utilities*", reply_markup=tools_menu(), parse_mode="Markdown")
+    if data == "home":
+        context.user_data["state"] = None
+        await query.edit_message_text("Choose a tool below:", reply_markup=main_menu())
     
-    elif data == "ask_dl":
-        context.user_data["state"] = "waiting_for_link"
-        await query.message.reply_text("🔗 Paste your link (YouTube, IG, TikTok, etc):")
+    elif data == "set_dl": 
+        context.user_data["state"] = "dl"
+        await query.edit_message_text("📥 *Downloader*\nPaste any link (YouTube, TikTok, IG, FB):", parse_mode="Markdown", reply_markup=back_btn())
     
-    elif data == "ask_wiki":
-        context.user_data["state"] = "waiting_for_wiki"
-        await query.message.reply_text("📖 What do you want to search on Wikipedia?")
+    elif data == "set_ai":
+        context.user_data["state"] = "ai"
+        await query.edit_message_text("🎨 *AI Image Generator*\nDescribe the image you want to create:", parse_mode="Markdown", reply_markup=back_btn())
 
-    elif data == "ask_pass":
-        pw = "".join(secrets.choice(string.ascii_letters + string.digits) for _ in range(12))
-        await query.message.reply_text(f"🔑 *Generated Password:* `{pw}`", parse_mode="Markdown")
+    elif data == "set_wiki":
+        context.user_data["state"] = "wiki"
+        await query.edit_message_text("📖 *Wikipedia*\nWhat do you want to search for?", parse_mode="Markdown", reply_markup=back_btn())
 
-    elif data == "ask_pdf":
-        context.user_data["state"] = "waiting_for_pdf"
+    elif data == "set_trans":
+        context.user_data["state"] = "trans"
+        await query.edit_message_text("🌐 *Translator*\nSend text to translate to English:", parse_mode="Markdown", reply_markup=back_btn())
+
+    elif data == "set_weather":
+        context.user_data["state"] = "weather"
+        await query.edit_message_text("⛅ *Weather*\nSend a city name (e.g., London):", parse_mode="Markdown", reply_markup=back_btn())
+
+    elif data == "set_curr":
+        context.user_data["state"] = "curr"
+        await query.edit_message_text("💱 *Currency*\nFormat: `100 USD to EUR`", parse_mode="Markdown", reply_markup=back_btn())
+
+    elif data == "set_tts":
+        context.user_data["state"] = "tts"
+        await query.edit_message_text("🗣️ *Text to Speech*\nSend text to convert to voice:", parse_mode="Markdown", reply_markup=back_btn())
+
+    elif data == "set_short":
+        context.user_data["state"] = "short"
+        await query.edit_message_text("🔗 *URL Shortener*\nPaste your long link:", parse_mode="Markdown", reply_markup=back_btn())
+
+    elif data == "set_pdf":
+        context.user_data["state"] = "pdf"
         context.user_data["pdf_files"] = []
-        await query.message.reply_text("📄 Send me photos one by one. When done, click /done_pdf")
+        await query.edit_message_text("📄 *Image to PDF*\nSend images one by one. When finished, type /done", parse_mode="Markdown", reply_markup=back_btn())
 
-async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    uid = update.effective_user.id
-    text = update.message.text
+    elif data == "set_pass":
+        pw = "".join(secrets.choice(string.ascii_letters + string.digits + "@#") for _ in range(16))
+        await query.message.reply_text(f"🔑 *Secure Password:* `{pw}`", parse_mode="Markdown", reply_markup=back_btn())
+
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     state = context.user_data.get("state")
-
-    if state == "waiting_for_link":
-        msg = await update.message.reply_text("Processing link... ⏳")
-        dl_url = await asyncio.to_thread(get_cobalt_url, text)
-        if dl_url:
-            await update.message.reply_video(dl_url, caption="✅ Success!")
-            await msg.delete()
-        else:
-            await msg.edit_text("❌ Could not process link.")
-        context.user_data["state"] = None
-
-    elif state == "waiting_for_wiki":
-        wiki = wikipediaapi.Wikipedia('SuperBot/1.0', 'en')
-        page = wiki.page(text)
-        if page.exists():
-            await update.message.reply_text(f"📚 *{page.title}*\n\n{page.summary[:500]}...", parse_mode="Markdown")
-        else:
-            await update.message.reply_text("❌ Not found.")
-        context.user_data["state"] = None
-
-async def handle_docs(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text
     uid = update.effective_user.id
-    if context.user_data.get("state") == "waiting_for_pdf" and update.message.photo:
+
+    if not state: return
+
+    # TOOL 1: Downloader logic
+    if state == "dl":
+        m = await update.message.reply_text("Downloading... ⏳")
+        file_url = await asyncio.to_thread(get_media, text)
+        if file_url:
+            await update.message.reply_video(file_url)
+            await m.delete()
+        else: await m.edit_text("❌ Failed. Ensure the link is public.")
+
+    # TOOL 2: AI Image
+    elif state == "ai":
+        m = await update.message.reply_text("Generating... 🎨")
+        prompt = urllib.parse.quote(text)
+        img_url = f"https://image.pollinations.ai/prompt/{prompt}?width=1024&height=1024&nologo=true"
+        await update.message.reply_photo(img_url, caption=f"🎨: {text}")
+        await m.delete()
+
+    # TOOL 3: Wikipedia
+    elif state == "wiki":
+        res = await asyncio.to_thread(search_wiki, text)
+        await update.message.reply_text(res, parse_mode="Markdown")
+
+    # TOOL 4: Weather
+    elif state == "weather":
+        res = await asyncio.to_thread(get_weather, text)
+        await update.message.reply_text(res)
+
+    # TOOL 5: Translator
+    elif state == "trans":
+        res = GoogleTranslator(source='auto', target='en').translate(text)
+        await update.message.reply_text(f"🌐 *Translated:* \n`{res}`", parse_mode="Markdown")
+
+    # TOOL 6: Currency
+    elif state == "curr":
+        try:
+            parts = text.split()
+            res = convert_curr(float(parts[0]), parts[1], parts[4])
+            await update.message.reply_text(res)
+        except: await update.message.reply_text("❌ Format: `100 USD to EUR`")
+
+    # TOOL 7: TTS
+    elif state == "tts":
+        tts = gTTS(text=text, lang='en')
+        tts.save(f"{uid}.mp3")
+        await update.message.reply_voice(open(f"{uid}.mp3", "rb"))
+        os.remove(f"{uid}.mp3")
+
+    # TOOL 8: Shortener
+    elif state == "short":
+        r = requests.get(f"http://tinyurl.com/api-create.php?url={text}")
+        await update.message.reply_text(f"🔗 *Shortened:* {r.text}", parse_mode="Markdown")
+
+async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if context.user_data.get("state") == "pdf":
         file = await update.message.photo[-1].get_file()
-        path = f"tmp_{uid}_{len(context.user_data['pdf_files'])}.jpg"
+        path = f"img_{update.effective_user.id}_{len(context.user_data['pdf_files'])}.jpg"
         await file.download_to_drive(path)
         context.user_data["pdf_files"].append(path)
-        await update.message.reply_text(f"✅ Added image {len(context.user_data['pdf_files'])}. Type /done_pdf to finish.")
+        await update.message.reply_text(f"📸 Image {len(context.user_data['pdf_files'])} added. Send more or type /done")
 
 async def done_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
     files = context.user_data.get("pdf_files", [])
     if not files: return
-    out = f"result_{update.effective_user.id}.pdf"
+    out = f"Result_{update.effective_user.id}.pdf"
     with open(out, "wb") as f:
         f.write(img2pdf.convert(files))
     await update.message.reply_document(open(out, "rb"))
@@ -199,20 +251,19 @@ async def done_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["state"] = None
 
 # ══════════════════════════════════════════════════════════
-# 6. MAIN EXECUTION
+# 6. RUN BOT
 # ══════════════════════════════════════════════════════════
 if __name__ == "__main__":
     load_db()
-    # Run Flask in background for Render
     Thread(target=run_keep_alive, daemon=True).start()
     
     app = Application.builder().token(TOKEN).build()
-    app.add_handler(CommandHandler("start", start_command))
-    app.add_handler(CommandHandler("done_pdf", done_pdf))
-    app.add_handler(CallbackQueryHandler(callback_handler))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
-    app.add_handler(MessageHandler(filters.PHOTO, handle_docs))
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("done", done_pdf))
+    app.add_handler(CallbackQueryHandler(handle_callbacks))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
 
-    print("Bot is starting...")
-    # drop_pending_updates=True is the FIX for the Conflict Error
+    print("Bot is active!")
+    # drop_pending_updates=True prevents the Conflict error
     app.run_polling(drop_pending_updates=True)
