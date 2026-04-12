@@ -7,3 +7,4 @@ img2pdf
 pillow
 wikipedia-api
 youtube-search-python
+pyfiglet
